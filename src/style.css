@@ -1,0 +1,3700 @@
+@font-face {
+  font-family: 'Pixelify Sans';
+  src: url('fonts/pixelify-sans-latin.woff2') format('woff2');
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+:root {
+  --bg: #14110c;
+  --panel: #1c1711;
+  --card: #241e15;
+  --card-hover: #2e261a;
+  --line: #3d3223;
+  --text: #efe6d2;
+  --muted: #c2b08c;
+  --dim: #8c7b5c;
+  --accent: #e0b04a;
+  --danger: #f87171;
+  --radius: 4px;
+  font-family: 'Pixelify Sans', ui-monospace, monospace;
+  font-variant-ligatures: none; /* the Pixelify subset maps "fi"/"fl" to a wrong glyph ("fixa" read "Axa") */
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Components set display: flex/grid; the hidden attribute must still win. */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  height: 100vh;
+}
+
+.stage-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Scrolls once the office is zoomed past the available area; centered (margin auto) below that. */
+.stage {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+  scrollbar-width: thin; /* the map pans by drag, keys and minimap; the bars are only a hint */
+  scrollbar-color: #6b4f2a transparent;
+  background:
+    radial-gradient(circle at 50% 40%, #2a2214 0%, transparent 70%),
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.015) 3px 4px),
+    var(--bg);
+}
+
+.command-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.command-hint {
+  margin: 0;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.preset-list,
+.quick-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.quick-presets {
+  flex-flow: row wrap;
+}
+
+.quick-presets:empty {
+  display: none;
+}
+
+.preset {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.preset small {
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.preset:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.preset:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.preset:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.quick-presets .preset {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
+.quick-presets .preset small {
+  display: none;
+}
+
+.command-target {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #120f0a;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.command-input {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #120f0a;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.command-input:focus,
+.command-target:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.world {
+  position: relative;
+  flex: none;
+  margin: auto;
+  box-shadow:
+    0 0 0 3px #2a1f14,
+    0 0 0 5px #8a6a3a,
+    0 0 0 8px #2a1f14,
+    0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+.world canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.world-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.unit-label {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  transform: translateX(-50%);
+  font-size: max(9px, calc(var(--px, 2) * 5px));
+  line-height: 1.1;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.idle-tag {
+  position: absolute;
+  transform: translateX(-50%);
+  padding: 0 3px;
+  border-radius: 2px;
+  background: rgba(20, 16, 10, 0.55);
+  color: rgba(253, 230, 138, 0.75);
+  font-size: max(8px, calc(var(--px, 2) * 4px));
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.label-more {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  visibility: hidden;
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.unit-label .label-more {
+  visibility: visible;
+}
+
+.unit-label strong,
+.unit-label span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unit-label strong {
+  display: -webkit-box;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  background: rgba(20, 16, 10, 0.85);
+  font-weight: 600;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.unit-label span {
+  color: var(--muted);
+  font-size: max(8px, calc(var(--px, 2) * 4.5px));
+  text-shadow: 0 1px 0 #000;
+}
+
+.unit-label[data-kind='asking'] strong {
+  border-color: var(--danger);
+  color: #fecaca;
+  animation: blink 1s steps(2) infinite;
+}
+
+.unit-label[data-kind='asking'] span {
+  color: #fecaca;
+}
+
+.unit-label[data-kind='reserved'] strong {
+  border-style: dashed;
+  border-color: var(--accent);
+}
+
+.unit-label[data-kind='reserved'] span {
+  color: var(--accent);
+}
+
+.unit-label[data-kind='yourturn'] strong {
+  border-color: #fbbf24;
+}
+
+.unit-label[data-kind='yourturn'] span {
+  color: #fde68a;
+}
+
+/* Its card is hovered in the panel. */
+.unit-label.is-linked strong {
+  border-color: #facc15;
+  box-shadow: 0 0 0 1px #facc15;
+}
+
+/* Nameplate under each base: the repository and how its agents are doing. */
+.base-label {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  transform: translateX(-50%);
+  font-size: max(9px, calc(var(--px, 2) * 5px));
+  line-height: 1.1;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.base-label strong,
+.base-label span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A long folder name wraps (at its joints: - _ . and camelCase) onto a second line, not cut short. */
+.base-label strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.base-label strong {
+  padding: 0 6px;
+  border: 1px solid #6b4f2a;
+  border-left: 4px solid var(--team, var(--accent));
+  background: rgba(36, 26, 14, 0.9);
+  color: #f5e6c4;
+  font-weight: 600;
+}
+
+.base-label span {
+  color: #f1e4c6;
+  font-size: max(8px, calc(var(--px, 2) * 4.5px));
+  text-shadow: 0 1px 0 #000, 0 0 3px #000;
+}
+
+.base-label[data-kind='asking'] strong {
+  border-color: var(--danger);
+  border-left-color: var(--team, var(--danger));
+  color: #fecaca;
+  animation: blink 1s steps(2) infinite;
+}
+
+.base-label[data-kind='asking'] span {
+  color: #fecaca;
+}
+
+.base-label[data-kind='yourturn'] span {
+  color: #fde68a;
+}
+
+.base-label[data-kind='reserved'] strong {
+  border-style: dashed;
+  border-left-style: solid;
+}
+
+.base-label[data-kind='reserved'] span {
+  color: var(--accent);
+}
+
+/* Balloon over each town center: the tokens its agents spent in the plan's session window and
+   their part of the session. The bar is the whole session: this base lit, the rest of the use dim. */
+.spend-balloon {
+  --spend-color: #3b82f6;
+  --spend-ink: #1d4ed8;
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 5px 3px;
+  transform: translate(-50%, calc(-100% - 5px)); /* the tail's tip on the roof */
+  transform-origin: 50% calc(100% + 5px);
+  border: 1px solid #6b4f2a;
+  border-radius: 3px;
+  background: #f5e6c4;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+  color: #2a1d10;
+  font-size: max(8px, calc(var(--px, 2) * 4px));
+  line-height: 1.15;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.spend-balloon::before,
+.spend-balloon::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: solid transparent;
+}
+
+.spend-balloon::before {
+  border-width: 6px 5px 0;
+  border-top-color: #6b4f2a;
+}
+
+.spend-balloon::after {
+  border-width: 5px 4px 0;
+  border-top-color: #f5e6c4;
+}
+
+.spend-balloon[data-severity='warning'] {
+  --spend-color: #f59e0b;
+  --spend-ink: #92400e;
+}
+
+.spend-balloon[data-severity='critical'] {
+  --spend-color: #ef4444;
+  --spend-ink: #b91c1c;
+}
+
+.spend-tokens,
+.spend-meter {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.spend-tokens svg {
+  width: 1.15em;
+  height: 1.15em;
+}
+
+.spend-tokens strong {
+  font-weight: 700;
+}
+
+.spend-bar {
+  flex: 1 0 auto;
+  width: max(24px, calc(var(--px, 2) * 16px)); /* a width, not a flex-basis: the balloon sizes itself by it */
+  height: max(5px, calc(var(--px, 2) * 2.5px));
+  border: 1px solid #6b4f2a;
+  background: linear-gradient(to right, var(--spend-color) 0 var(--mine), #b9a57c var(--mine) var(--used), #e9d9b4 var(--used) 100%);
+}
+
+.spend-meter b {
+  color: var(--spend-ink);
+}
+
+/* More tokens since the last count: a small pop, as resources ticking up in the game. */
+.spend-balloon.is-growing {
+  animation: spend-pop 0.5s ease-out;
+}
+
+@keyframes spend-pop {
+  40% {
+    scale: 1.15;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spend-balloon.is-growing {
+    animation: none;
+  }
+}
+
+/* "Aldeão ocioso": count of agents waiting on you; click (or .) jumps to the next one. */
+.idle-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  margin-right: 6px;
+  padding: 0 7px;
+  border: 1px solid #fbbf24;
+  border-radius: var(--radius);
+  background: #2e2610;
+  color: #fbbf24;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.idle-button:disabled {
+  border-color: var(--line);
+  background: var(--card);
+  color: var(--dim);
+  cursor: default;
+}
+
+.idle-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.empty {
+  position: absolute;
+  inset: auto 16px 76px; /* above the game bar */
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.panel-head {
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-title {
+  display: flex;
+  flex-wrap: wrap; /* at a big UI zoom the buttons drop under the title instead of off the window */
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.refresh {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.refresh:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.refresh:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.refresh:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.panel-head h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.panel-head h1::before {
+  content: '⚔ ';
+  color: var(--accent);
+}
+
+.counts {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.icon-button:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.icon-button:hover,
+.icon-button[aria-expanded='true'] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.icon-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.refresh-primary {
+  border-color: var(--accent);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.panel-title h1 {
+  white-space: nowrap;
+}
+
+.modal {
+  position: fixed;
+  top: 10vh;
+  left: 50%;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  width: min(560px, calc(100vw - 32px));
+  max-height: 80vh;
+  transform: translateX(-50%);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  padding: 12px 16px;
+  overflow: auto;
+}
+
+.field-label {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.field {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #120f0a;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.field:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.project-list {
+  max-height: 220px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  list-style: none;
+}
+
+.project-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-option small {
+  padding-left: 18px; /* under the name, past the swatch */
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.project-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-top strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-top .swatch {
+  margin-top: 0;
+}
+
+.project-list li:last-child .project-option {
+  border-bottom: 0;
+}
+
+/* Search and results read as one control. */
+.project-picker .field {
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.project-picker .project-list {
+  border-top: 0;
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: #17130d;
+}
+
+/* Live sessions in the repo: amber while all wait on you, green once one is working. */
+.project-agents {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid #fbbf24;
+  background: #2e2610;
+  color: #fbbf24;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.project-agents.is-working {
+  border-color: #4ade80;
+  background: #12301f;
+  color: #4ade80;
+}
+
+.project-option:hover,
+.project-option.is-active {
+  background: var(--card-hover);
+}
+
+.project-option[aria-selected='true'] {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.project-empty {
+  padding: 10px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.deploy .field-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.deploy .field-label:first-child {
+  margin-top: 0;
+}
+
+.step {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--accent);
+  background: #2e2610;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.deploy-modes {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+/* A legend ignores the label's margin and brings its own padding. */
+.deploy-modes legend {
+  margin: 0 0 6px;
+  padding: 0;
+}
+
+.deploy-mode-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.deploy-mode {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  cursor: pointer;
+}
+
+/* The tile is the control; the radio stays for keyboard (arrows) and screen readers. */
+.deploy-mode input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.deploy-mode:hover {
+  border-color: var(--dim);
+  color: var(--text);
+}
+
+.deploy-mode:has(input:checked) {
+  border-color: var(--accent);
+  background: #2e2610;
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.deploy-mode:has(input:checked) strong {
+  color: var(--text);
+}
+
+.deploy-mode:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.deploy-mode small {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.deploy-mode-hint {
+  min-height: 2.6em; /* two lines, so switching modes doesn't move the footer */
+  margin: 0;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.deploy .deploy-chosen {
+  overflow: hidden;
+  color: var(--dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deploy-chosen strong {
+  color: var(--accent);
+  font-weight: 400;
+}
+
+.question {
+  margin: 6px 0 8px;
+}
+
+.question-text {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.question-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.option small {
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.option[aria-pressed='true'] {
+  border-color: #fbbf24;
+  background: #2e2610;
+}
+
+.option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.option-other {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.deploy-chosen {
+  margin: 2px 0 0;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+#map-only[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.view-toggle {
+  min-width: 34px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Só o mapa: the stage takes the whole window */
+.app.is-map-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app.is-map-only > .panel {
+  display: none;
+}
+
+/* Box selection over the 3D scene (the 2D map draws it on its canvas) */
+.select-box {
+  position: absolute;
+  border: 1px solid #f4f4f0;
+  background: rgba(244, 244, 240, 0.1);
+  pointer-events: none;
+}
+
+.view-setting {
+  margin: 0;
+}
+
+.view-setting legend small {
+  display: block;
+}
+
+/* Long descriptions here, unlike the deploy tiles: title on top, text below, left-aligned. */
+.view-setting .deploy-mode {
+  align-items: stretch;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.view-setting .deploy-mode span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.view-setting small {
+  color: var(--dim);
+}
+
+/* The game bar, centered at the bottom like AoE's command panel: build and summon on the left, then
+   the command line as one field (who, where, what, send); the shortcuts show below it only when
+   the command goes to a live agent. The overlays above it follow its height (--hud-height). */
+.hud {
+  /* left + right + fit-content: centered with the whole stage width to grow into */
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  left: 16px;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: auto auto minmax(300px, 640px);
+  align-items: end;
+  gap: 6px 8px;
+  width: fit-content;
+  max-width: calc(100% - 32px);
+  margin-inline: auto;
+  padding: 7px 8px;
+  border: 1px solid #0d0a06;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #2b2218 0%, #1d1812 55%, #17120d 100%);
+  /* inner gold trim + a faint lit top edge: a framed panel, not a floating form */
+  box-shadow:
+    inset 0 0 0 1px #7a5a2c,
+    inset 0 2px 0 1px rgba(255, 214, 140, 0.1),
+    0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+/* Construir and Recrutar: beveled icon buttons, as in AoE's command grid (the title says what they
+   do), the height of the command field */
+.hud-build,
+.summon-token {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid #4a3a24;
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, #3a2e1f 0%, #2a2117 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 226, 160, 0.14),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.35);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.hud-build svg,
+.summon-token svg {
+  width: 18px;
+  height: 18px;
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.6));
+}
+
+.hud-build:hover,
+.hud-build[aria-expanded='true'],
+.summon-token:hover,
+.summon-token:focus-visible {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, #4a3a22 0%, #33281a 100%);
+  outline: none;
+}
+
+.hud-build:active,
+.hud-build[aria-expanded='true'],
+.summon-token:active {
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.5);
+}
+
+.hud-build:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Hotkey hints, as AoE prints them on its buttons */
+.hud-key {
+  padding: 0 4px;
+  border: 1px solid #4a3a24;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+/* A carved groove between the buttons and the command field */
+.hud-summon {
+  display: flex;
+  gap: 4px;
+  padding-right: 8px;
+  border-right: 1px solid #0d0a06;
+  box-shadow: 1px 0 0 rgba(255, 214, 140, 0.08);
+}
+
+.summon-token {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.summon-ghost {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: rgba(36, 30, 21, 0.92);
+  color: #e0b04a;
+  font-size: 10px;
+  pointer-events: none;
+  transform: translate(-50%, -70%);
+}
+
+/* One sunken field: the chips, the text and Enviar live inside it; the border lights on focus */
+.hud .command-bar {
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 2px;
+  border: 1px solid #4a3a24;
+  border-radius: var(--radius);
+  background: #0f0c08;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+
+.hud .command-bar:focus-within {
+  border-color: var(--accent);
+}
+
+/* "Para quem": the unit's portrait and name (or the base a new one starts in); opens the app's own menu */
+.command-target-button {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 92px;
+  max-width: 230px;
+  height: 30px;
+  padding: 0 7px 0 3px;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.command-target-button:hover,
+.command-target-button[aria-expanded='true'] {
+  background: rgba(224, 176, 74, 0.14);
+}
+
+.command-target-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The unit's bust, as in AoE's selection panel; the frame carries the status color */
+.unit-portrait {
+  flex: none;
+  width: 24px;
+  height: 26px;
+  border: 1px solid var(--swatch, var(--accent));
+  border-radius: 2px;
+  background: linear-gradient(180deg, #3b4a2a 0%, #24301a 100%);
+  image-rendering: pixelated;
+}
+
+.command-target-tag {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: rgba(224, 176, 74, 0.18);
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.command-target-label {
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-target-caret {
+  margin-left: auto;
+  color: var(--dim);
+  font-size: 10px;
+}
+
+/* Grows with Shift+Enter lines (main.js sets the height) up to five, then scrolls */
+.hud .command-input {
+  flex: 1;
+  min-width: 120px;
+  height: 30px;
+  min-height: 30px;
+  max-height: 96px;
+  padding: 7px 6px;
+  border: 0;
+  background: transparent;
+  line-height: 16px;
+  resize: none;
+  font-size: 13px;
+}
+
+.hud .command-input:focus {
+  outline: none;
+}
+
+.hud .command-input::placeholder {
+  color: var(--dim);
+}
+
+.command-slash {
+  align-self: center;
+  margin-right: 3px;
+}
+
+.hud .command-bar:focus-within .command-slash {
+  display: none;
+}
+
+.hud .command-bar .btn {
+  height: 30px;
+  padding: 0 14px;
+  background: linear-gradient(180deg, #6b5320 0%, #4a3a14 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 236, 180, 0.22);
+  color: #fff3d6;
+  white-space: nowrap;
+}
+
+.hud .command-bar .btn:hover {
+  background: linear-gradient(180deg, #7d6226 0%, #57441a 100%);
+}
+
+/* One compact line under the command field; scrolls sideways instead of wrapping */
+.hud .preset-list {
+  grid-column: 3;
+  flex-direction: row;
+  gap: 4px;
+  padding-left: 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.hud .preset {
+  flex: none;
+  padding: 2px 8px;
+  border-color: #3a2e1e;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.hud .preset strong {
+  font-weight: 400;
+}
+
+.hud .preset:hover:not(:disabled) {
+  background: rgba(224, 176, 74, 0.12);
+  color: var(--text);
+}
+
+.hud .preset small {
+  display: none;
+}
+
+.build-menu {
+  position: absolute;
+  right: 16px;
+  bottom: calc(var(--hud-height, 88px) + 24px);
+  left: 16px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(340px, calc(100% - 32px));
+  max-height: 55vh;
+  margin-inline: auto;
+  padding: 10px;
+  border: 1px solid #6b4f2a;
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+.build-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.build-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.build-item small,
+.build-empty {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.build-item:hover,
+.build-item[aria-selected='true'] {
+  border-color: var(--accent);
+  background: var(--card);
+}
+
+/* A narrow stage: the buttons on one line, the command field and the shortcuts under them */
+@media (max-width: 640px) {
+  .hud {
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+
+  .hud .command-bar,
+  .hud .preset-list {
+    grid-column: 1 / -1;
+  }
+
+  .hud .command-input {
+    min-width: 170px;
+  }
+
+  .command-slash {
+    display: none;
+  }
+
+  .hud-summon {
+    border: 0;
+    box-shadow: none;
+  }
+}
+
+/* Resources, as in AoE: top-left of the map; a click opens the empire overview */
+.resource-bar {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 10px;
+  border: 1px solid #6b4f2a;
+  border-radius: var(--radius);
+  background: rgba(28, 23, 17, 0.92);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.resource-bar:hover,
+.resource-bar:focus-visible {
+  border-color: var(--accent);
+}
+
+.resource-bar:empty {
+  display: none;
+}
+
+.resource {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.resource svg,
+.overview-total svg,
+.overview-num svg {
+  image-rendering: pixelated;
+  flex: none;
+}
+
+.resource-pop {
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
+}
+
+/* Minimap: only while the map is zoomed in, above the map controls */
+.minimap {
+  position: absolute;
+  top: 60px;
+  right: 16px;
+  width: 186px;
+  border: 1px solid #6b4f2a;
+  border-radius: var(--radius);
+  background: #14110c;
+  cursor: crosshair;
+}
+
+.base-label[data-kind='fog'] {
+  max-width: none !important;
+}
+
+.base-label[data-kind='fog'] strong {
+  border-style: dashed;
+  color: #d1d5db;
+}
+
+.base-label[data-kind='fog'] span {
+  color: #d1d5db;
+}
+
+/* Visão do império */
+.modal.overview {
+  width: min(860px, calc(100vw - 32px));
+}
+
+.overview-summary {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.overview-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.overview-total {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  font-size: 13px;
+}
+
+.overview-total small {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+/* a scroll container in the modal's flex column would be squeezed to nothing */
+.overview-table-wrap {
+  flex: none;
+  overflow-x: auto;
+}
+
+.overview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.overview-table th {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.overview-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.overview-base {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+}
+
+.overview-emblem {
+  width: 50px;
+  height: 56px;
+  border-radius: var(--radius);
+  image-rendering: pixelated;
+}
+
+.overview-base-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.overview-base-text small,
+.overview-founded {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.overview-num {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.overview-num span {
+  margin-left: 5px;
+}
+
+.overview-fog-title,
+.overview-section-title {
+  margin-top: 14px;
+}
+
+.overview-section-title small {
+  color: var(--dim);
+}
+
+.overview-wonders {
+  color: #f2c84b;
+}
+
+.overview-xp {
+  display: block;
+  width: 120px;
+  height: 3px;
+  margin-top: 3px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.overview-xp > span {
+  display: block;
+  height: 100%;
+  background: #f2c84b;
+}
+
+.overview-achievements {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px;
+}
+
+.achievement {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.achievement strong {
+  color: var(--muted);
+}
+
+.achievement small {
+  font-size: 10px;
+}
+
+.achievement.is-unlocked {
+  border: 1px solid #c99a2e;
+  background: #2a2112;
+  color: var(--muted);
+}
+
+.achievement.is-unlocked strong {
+  color: #f2c84b;
+}
+
+.overview-history svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.overview-events {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.overview-events time {
+  display: inline-block;
+  min-width: 92px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.overview-usage {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.overview-fog {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.overview-fog-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 5px 10px;
+  border: 1px dashed #6b7280;
+  border-radius: var(--radius);
+  background: #1b1d1f;
+  color: #d1d5db;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.overview-fog-chip:hover,
+.overview-fog-chip:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.overview-fog-chip small {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+/* Personalizar base: preview, era pills and the Ragnarok city cards */
+.modal.design {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.design-top {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.design-figure {
+  margin: 0;
+}
+
+.design-preview {
+  display: block;
+  width: 216px;
+  height: 192px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  image-rendering: pixelated;
+}
+
+.design-preview-3d {
+  image-rendering: auto;
+}
+
+.design-caption {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.design-eras,
+.design-styles {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.design-eras {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.design-pill {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.design-pill:has(input:checked) {
+  border-color: var(--accent);
+  background: #231a17;
+  color: var(--text);
+}
+
+.design-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.design-swatch {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  background: var(--swatch);
+  color: #1b1d2b;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.design-swatch.is-auto {
+  width: auto;
+  padding: 0 8px;
+  border-color: var(--line);
+  background: var(--card);
+  color: var(--muted);
+}
+
+.design-swatch:has(input:checked) {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.design-swatch:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.design-styles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.design-styles legend {
+  margin-bottom: 6px;
+}
+
+.design-style {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.design-style:has(input:checked) {
+  border-color: var(--accent);
+  background: #231a17;
+}
+
+.design-style canvas {
+  width: 100px;
+  height: 112px;
+  image-rendering: pixelated;
+}
+
+.design-pill:has(input:focus-visible),
+.design-style:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+@media (max-width: 560px) {
+  .design-top {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+}
+
+.modal-note {
+  margin: 4px 0 0;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.btn {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-primary {
+  border-color: var(--accent);
+  background: #4a3a14;
+}
+
+/* Side action, kept apart from Cancel / the primary on the left of the footer. */
+.btn-ghost {
+  margin-right: auto;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.btn kbd {
+  margin-left: 6px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+}
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(10, 8, 5, 0.5);
+}
+
+.settings {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  width: min(360px, 100vw);
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.45);
+  animation: settings-in 0.15s steps(4);
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #6b4f2a transparent;
+}
+
+/* Exibição, Som, Bases no mapa: a rule above all but the first, like the menu's sections. */
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-group + .settings-group,
+.settings-links {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.settings-group-title {
+  margin: 0;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.settings-group-hint {
+  margin: -6px 0 0;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+/* Picked villagers: what a right-click on a base will do. */
+.selection-bar {
+  position: absolute;
+  right: 16px;
+  bottom: calc(var(--hud-height, 88px) + 24px);
+  left: 16px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  max-width: calc(100% - 32px);
+  margin-inline: auto;
+  padding: 4px 10px;
+  border: 1px solid #f4f4f0;
+  border-radius: var(--radius);
+  background: rgba(28, 23, 17, 0.92);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.selection-bar span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card.is-picked {
+  box-shadow: inset 0 0 0 1px #f4f4f0;
+}
+
+.order-who {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.order-who li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.order-who .swatch {
+  width: 10px;
+  height: 10px;
+  background: var(--team);
+}
+
+.order-who strong {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-who small {
+  color: var(--dim);
+}
+
+.order-who .order-own {
+  grid-column: 1 / -1;
+  margin-bottom: 6px;
+}
+
+/* Settings › Bases no mapa */
+.base-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.base-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  font-size: 13px;
+}
+
+.base-row .swatch {
+  width: 10px;
+  height: 10px;
+  background: var(--team);
+}
+
+.base-row.is-hidden .swatch,
+.base-row.is-hidden .base-row-text {
+  opacity: 0.5;
+}
+
+.base-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  margin-right: 4px;
+}
+
+.base-row-text strong {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.base-row-text small {
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.base-row-icon {
+  display: grid;
+  width: 14px;
+  height: 14px;
+}
+
+.base-row-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.base-row-show {
+  margin-left: 4px;
+}
+
+.base-row-show .toggle-track {
+  margin-top: 0;
+}
+
+.base-add {
+  padding: 8px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.base-add:hover {
+  border-color: var(--accent);
+  background: var(--card);
+}
+
+.base-add:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.base-empty {
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.base-label[data-kind='empty'] span {
+  color: #d6c8a8;
+}
+
+.sound-previews {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  margin-top: -6px;
+  padding-left: 36px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.volume-setting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: -6px;
+  padding-left: 36px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.volume-setting:has(input:disabled) {
+  opacity: 0.5;
+}
+
+.volume-setting input {
+  flex: 1;
+  min-width: 0;
+  height: 14px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.volume-setting input:disabled {
+  cursor: default;
+}
+
+.volume-setting input::-webkit-slider-runnable-track {
+  height: 4px;
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+
+.volume-setting input::-webkit-slider-thumb {
+  width: 8px;
+  height: 12px;
+  margin-top: -4px; /* centers it on the 4px track */
+  appearance: none;
+  background: var(--accent);
+}
+
+.volume-setting input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.volume-setting output {
+  min-width: 36px;
+  text-align: right;
+}
+
+.view-controls {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(28, 23, 17, 0.88);
+}
+
+.zoom-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.zoom-value {
+  min-width: 44px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.toggle-text small {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+@keyframes settings-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
+.toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggle-track {
+  position: relative;
+  flex: none;
+  margin-top: 2px;
+  width: 26px;
+  height: 14px;
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  background: var(--dim);
+  transition: transform 0.12s steps(3);
+}
+
+.toggle input:checked + .toggle-track {
+  border-color: var(--accent);
+}
+
+.toggle input:checked + .toggle-track::after {
+  background: var(--accent);
+  transform: translateX(12px);
+}
+
+.toggle input:focus-visible + .toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.group + .group {
+  margin-top: 12px;
+}
+
+/* One line at any panel width: the name truncates, the chips and "+ Agente" share one slot. */
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding-right: 6px;
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--radius) var(--radius) 0 0;
+  font-size: 13px;
+}
+
+.group-head:hover {
+  background: var(--card);
+}
+
+.group-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.group-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.group-toggle .swatch {
+  margin-top: 0;
+}
+
+.group-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-caret {
+  flex: none;
+  width: 10px;
+  color: var(--muted);
+}
+
+.group-meta {
+  display: grid;
+  flex: none;
+  align-items: center;
+  justify-items: end;
+}
+
+.group-meta > * {
+  grid-area: 1 / 1;
+}
+
+.group-chips {
+  display: flex;
+  gap: 4px;
+}
+
+.group-chip {
+  --chip: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.group-chip::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  background: var(--chip);
+}
+
+.group-chip[data-rank='0'] {
+  --chip: var(--danger);
+  border-color: #7f1d1d;
+  background: #3b1219;
+  color: #fca5a5;
+}
+
+.group-chip[data-rank='1'] {
+  --chip: #fbbf24;
+  color: #fbbf24;
+}
+
+.group-chip[data-rank='2'] {
+  --chip: #4ade80;
+}
+
+.group-chip[data-rank='3'] {
+  --chip: var(--dim);
+  color: var(--dim);
+}
+
+.group-add {
+  opacity: 0;
+  pointer-events: none;
+  padding: 1px 7px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.group-head:hover .group-add,
+.group-add:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.group-head:hover .group-chips,
+.group-head:has(.group-add:focus-visible) .group-chips {
+  opacity: 0;
+}
+
+/* No hover on touch screens: keep "+ Agente" visible next to the chips. */
+@media (hover: none) {
+  .group-meta {
+    display: flex;
+    gap: 6px;
+  }
+
+  .group-add {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .group-head:hover .group-chips {
+    opacity: 1;
+  }
+}
+
+.group-list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.icon-button[aria-pressed='true'] {
+  border-color: #facc15;
+  color: #facc15;
+}
+
+.auto-approve {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 8px 0;
+  padding: 6px 10px;
+  border: 1px solid #facc15;
+  border-radius: var(--radius);
+  background: #2a2510;
+  color: #fde68a;
+  font-size: 12px;
+}
+
+.auto-approve strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.auto-approve .link-button {
+  margin-left: auto;
+}
+
+.approvals {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 8px 0;
+  list-style: none;
+}
+
+.approval {
+  padding: 10px;
+  border: 1px solid var(--danger);
+  border-left: 3px solid var(--team);
+  border-radius: var(--radius);
+  background: #2a1a22;
+  animation: approval-in 0.2s steps(3);
+}
+
+.approval-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.approval-timer {
+  margin-left: auto;
+  color: #fecaca;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.approval-label {
+  margin: 6px 0 4px;
+  color: #fecaca;
+  font-size: 13px;
+}
+
+.approval-detail {
+  max-height: 120px;
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  background: #120f0a;
+  color: var(--text);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.approval-actions button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.approval-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.approval-actions button:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.approval-actions .btn-allow {
+  border-color: #4ade80;
+  background: #14532d;
+}
+
+.approval-actions .btn-deny {
+  border-color: var(--danger);
+  background: #7f1d1d;
+}
+
+.approval-actions .btn-editor {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+@keyframes approval-in {
+  from {
+    transform: translateY(-4px);
+    opacity: 0;
+  }
+}
+
+.agent-list {
+  flex: 1;
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.agent-list li + li {
+  margin-top: 6px;
+}
+
+.card {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--kind);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-item {
+  position: relative;
+}
+
+.card-more {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 26px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--muted);
+  font: inherit;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.card-item:hover .card-more,
+.card-more:focus-visible,
+.card-more[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.card-more:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.quick {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 320px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+.quick-title {
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.quick-approval:empty {
+  display: none;
+}
+
+.quick-approval {
+  display: flex;
+  gap: 6px;
+}
+
+.quick-form {
+  display: flex;
+  gap: 6px;
+}
+
+.quick-form .field {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.quick-form .btn {
+  white-space: nowrap;
+}
+
+.base-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.base-card-head .quick-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.base-card-modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+/* Three across in a 320px card: the labels stay on one line. */
+.base-card-modes .btn {
+  padding: 6px 4px;
+  white-space: nowrap;
+}
+
+.base-card-modes .btn-primary {
+  font-weight: 600;
+}
+/* Who is in the building: waiting for you (amber) apart from working (green), one row each. */
+.base-card-crew {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.crew-head {
+  margin: 4px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.crew-head-waiting {
+  color: #fbbf24;
+}
+.crew-head-working {
+  color: #4ade80;
+}
+.crew-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-left: 3px solid var(--kind);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.crew-row:hover,
+.crew-row:focus-visible {
+  background: var(--card-hover);
+}
+.crew-status {
+  flex: none;
+  color: var(--kind);
+}
+.crew-task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.quick-open {
+  width: 100%;
+  font-weight: 600;
+}
+
+.quick-tip {
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.action-menu {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  max-height: min(80vh, 560px);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  font-variant-ligatures: none; /* the pixel font's "fi" reads as an "A" */
+}
+
+.menu-title {
+  margin: 4px 8px 6px;
+  overflow: hidden;
+  color: var(--dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Icon, label (with a status line for list entries) and, for a submenu, a chevron. */
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.menu-text strong {
+  font-weight: 500;
+}
+
+.menu-text small {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.menu-icon,
+.menu-chevron {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+
+.menu-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--dim);
+}
+
+.menu-icon svg,
+.menu-chevron svg {
+  width: 100%;
+  height: 100%;
+}
+
+.menu-swatch {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin: 0 2px;
+  border-radius: 3px;
+  background: var(--swatch);
+}
+
+.menu-item:hover:not([aria-disabled='true']),
+.menu-item:focus-visible {
+  outline: none;
+  background: var(--card-hover);
+}
+
+.menu-item:hover:not([aria-disabled='true']) .menu-icon,
+.menu-item:focus-visible .menu-icon {
+  color: var(--text);
+}
+
+.menu-item[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.menu-item.is-danger {
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+  color: #fca5a5;
+}
+
+.menu-item.is-danger .menu-icon {
+  color: inherit;
+}
+
+.menu-divider {
+  margin: 4px 6px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* The hint of the action under the pointer or focus: two lines kept, so the menu never jumps. */
+.menu-hint {
+  min-height: calc(2 * 1.35em);
+  margin: 4px 0 0;
+  padding: 6px 8px 2px;
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.menu-item.is-confirming {
+  background: #7f1d1d;
+  color: #fff;
+}
+
+/* A group in the menu: "Agentes", "Base"… with a rule above all but the first. */
+.menu-section {
+  margin: 4px 8px 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.menu-title + .menu-section {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.menu-item.menu-back {
+  padding: 4px 8px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.menu-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px 8px;
+}
+
+.menu-field-row {
+  display: flex;
+  gap: 6px;
+}
+
+.menu-field .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.menu-field small {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toast-action,
+.link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-button:disabled {
+  color: var(--dim);
+  text-decoration: none;
+  cursor: default;
+}
+
+.dismissed-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+  padding: 6px 4px;
+  border-top: 1px dashed var(--line);
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.card:hover {
+  background: var(--card-hover);
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.card.is-selected {
+  border-color: #facc15;
+  border-left-color: var(--kind);
+}
+
+/* Its villager or base is hovered on the map. */
+.card.is-linked,
+.approval.is-linked {
+  border-color: #facc15;
+  box-shadow: 0 0 0 1px #facc15;
+}
+
+.card.is-linked {
+  border-left-color: var(--kind);
+}
+
+.approval.is-linked {
+  border-left-color: var(--team);
+}
+
+.card[data-kind='asking'] {
+  background: #2a1a22;
+}
+
+.card[data-kind='yourturn'] {
+  background: #262113;
+}
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 2px 0;
+}
+
+.timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+}
+
+.tl-step {
+  width: 5px;
+  height: 8px;
+  opacity: 0.85;
+}
+
+.tl-step:last-child {
+  outline: 1px solid var(--text);
+}
+
+.phases {
+  display: flex;
+  gap: 4px;
+  font-size: 10px;
+}
+
+.phase {
+  color: var(--dim);
+}
+
+.phase + .phase::before {
+  content: '› ';
+  color: var(--line);
+}
+
+.phase.is-done {
+  color: #86efac;
+}
+
+.phase.is-current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.card-conflict {
+  color: #fdba74;
+  font-size: 11px;
+}
+
+.card-conflict::before {
+  content: '! ';
+  font-weight: 700;
+}
+
+.quick-progress:empty {
+  display: none;
+}
+
+.quick-files {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pill-conflict {
+  background: #3a2210;
+  color: #fdba74;
+}
+
+.card-reply {
+  display: -webkit-box;
+  overflow: hidden;
+  padding-left: 6px;
+  border-left: 2px solid var(--kind);
+  color: var(--muted);
+  font-size: 12px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.section-head {
+  padding: 8px 4px 2px;
+  color: var(--dim);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.section-head[data-rank='0'] {
+  color: var(--danger);
+}
+
+.section-head[data-rank='1'] {
+  color: #fbbf24;
+}
+
+.limits {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.limit {
+  display: grid;
+  grid-template-columns: 78px 1fr 34px;
+  grid-template-areas: 'label bar percent' '. reset reset';
+  align-items: center;
+  column-gap: 8px;
+  font-size: 11px;
+  --limit-color: #4ade80;
+}
+
+.limit[data-severity='warning'] {
+  --limit-color: #fbbf24;
+}
+
+.limit[data-severity='critical'] {
+  --limit-color: #f87171;
+}
+
+.limit-label {
+  grid-area: label;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.limit-bar {
+  grid-area: bar;
+  height: 6px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #120f0a;
+}
+
+.limit-fill {
+  display: block;
+  height: 100%;
+  background: var(--limit-color);
+}
+
+.limit-percent {
+  grid-area: percent;
+  color: var(--limit-color);
+  font-weight: 600;
+  text-align: right;
+}
+
+.limit-reset {
+  grid-area: reset;
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.limit-stale {
+  margin: 0;
+  color: var(--dim);
+  font-size: 10px;
+}
+
+/* A limit past 90%: a red banner over the bars, pulsing a few times as it appears. */
+.limit-alert {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: rgba(248, 113, 113, 0.16);
+  color: #fecaca;
+  font-size: 11px;
+  animation: limit-alert 1.2s ease-in-out 3;
+}
+
+.limit-alert-title {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+@keyframes limit-alert {
+  50% {
+    box-shadow: 0 0 0 1px var(--danger), 0 0 12px rgba(248, 113, 113, 0.6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .limit-alert {
+    animation: none;
+  }
+}
+
+/* A limit that just reset: a gold glow pulsing a few times, like a resource pile refilled. */
+.limit.is-reset {
+  animation: limit-reset 1s ease-out 3;
+}
+
+@keyframes limit-reset {
+  0% {
+    background: rgba(224, 176, 74, 0.28);
+    box-shadow: 0 0 0 1px var(--accent), 0 0 12px rgba(224, 176, 74, 0.6);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 1px transparent, 0 0 0 transparent;
+  }
+}
+
+.pill {
+  display: inline-block;
+  margin: 2px 6px 0 0;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  font-size: 12px;
+}
+
+.pill-blocked {
+  background: #3b1219;
+  color: #fca5a5;
+  animation: blink 1s steps(2) infinite;
+}
+
+.pill-yourturn {
+  background: #2e2610;
+  color: #fbbf24;
+}
+
+.pill-working {
+  color: var(--muted);
+}
+
+.swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  background: var(--team);
+  box-shadow: 0 0 0 1px #0008;
+}
+
+.card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.card-name {
+  overflow: hidden;
+  font-weight: 600;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--kind);
+  color: var(--kind);
+  font-size: 11px;
+}
+
+.card-title {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.card-activity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.activity-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--kind);
+}
+
+.card:not([data-kind='idle']) > .card-main > .card-activity .dot {
+  animation: blink 1.2s steps(2) infinite;
+}
+
+.since {
+  flex: none;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.card-prompt {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--dim);
+  font-size: 12px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.card-subs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
+  padding: 4px 6px;
+  border: 1px dashed var(--line);
+}
+
+.sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+}
+
+.sub-type {
+  flex: none;
+  color: var(--text);
+}
+
+.sub-label {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-meta {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.panel-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 320px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(28, 23, 17, 0.96);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.tooltip strong {
+  font-weight: 600;
+}
+
+.tooltip em {
+  color: var(--accent);
+  font-style: normal;
+}
+
+.tooltip small {
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.toast {
+  /* top center, clear of the game bar at the bottom of the map */
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  z-index: 11;
+  max-width: min(480px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: rgba(28, 23, 17, 0.96);
+  font-size: 13px;
+}
+
+.toast.is-error {
+  border-color: var(--danger);
+  color: #fecaca;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (max-width: 1180px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+}
+
+/* Narrow: the panel moves under the office and the command column becomes a compact top bar. */
+@media (max-width: 980px) {
+  html,
+  body {
+    overflow: auto;
+  }
+
+  .app {
+    /* minmax(0, …): a long unbroken project name must truncate, not widen the page. */
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(320px, 60vh) auto;
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .agent-list {
+    overflow: visible;
+  }
+
+  .panel {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .panel-title {
+    flex-wrap: wrap;
+  }
+
+  .limit {
+    grid-template-columns: 64px 1fr 34px;
+  }
+
+  .quick,
+  .action-menu {
+    width: calc(100vw - 16px);
+  }
+}
+
+/* ---------- First run ("Fundar o império"), objectives and shortcuts ---------- */
+
+.modal.onboarding {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.onboarding-step {
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.onboarding-lead {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.onboarding-checks,
+.onboarding-bases {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.onboarding-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.onboarding-mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.onboarding-check.is-ok .onboarding-mark {
+  color: #4ade80;
+}
+
+.onboarding-check.is-warn .onboarding-mark {
+  color: var(--accent);
+}
+
+.onboarding-check.is-missing .onboarding-mark {
+  color: var(--danger);
+}
+
+.onboarding-base {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  cursor: pointer;
+}
+
+.onboarding-base:has(input:checked) {
+  border-color: var(--accent);
+}
+
+.onboarding-base input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.onboarding .toggle {
+  margin-top: 8px;
+}
+
+.onboarding-preview {
+  margin: 2px 0 0 36px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.onboarding-preview summary {
+  cursor: pointer;
+}
+
+.onboarding-preview pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #120f0a;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.onboarding-message {
+  color: var(--accent);
+}
+
+.settings-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+}
+
+/* Objectives, like the AoE tutorial: the current one with its hint, on top of the side panel. */
+.campaign {
+  margin: 8px 8px 0;
+  border: 1px solid #6b4f2a;
+  border-radius: var(--radius);
+  background: var(--card);
+  font-size: 12px;
+}
+
+.campaign-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 4px 4px 10px;
+}
+
+.campaign-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.campaign-dismiss {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+
+.campaign-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 2px 10px 8px;
+  list-style: none;
+}
+
+.campaign-mission {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  column-gap: 6px;
+  color: var(--dim);
+}
+
+.campaign-mission.is-current {
+  color: var(--text);
+}
+
+.campaign-mission.is-done .campaign-title {
+  text-decoration: line-through;
+}
+
+.campaign-mission.is-done .campaign-mark {
+  color: #4ade80;
+}
+
+.campaign-hint {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.shortcuts-body {
+  gap: 10px;
+}
+
+.shortcuts-list {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) 1fr;
+  gap: 4px 12px;
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.shortcuts-list dt {
+  color: var(--accent);
+}
+
+.shortcuts-list dd {
+  margin: 0;
+  color: var(--muted);
+}

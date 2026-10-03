@@ -1,0 +1,21 @@
+[package]
+name = "agent-of-empires"
+version = "0.1.0"
+description = "Mapa em pixel art, estilo Age of Empires, com as sessões do Claude Code ativas nesta máquina"
+edition = "2021"
+license = "MIT"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+# preserve_order: editing ~/.claude/settings.json must not reshuffle the user's keys.
+serde_json = { version = "1", features = ["preserve_order"] }
+libc = "0.2"
+
+[profile.release]
+strip = true
