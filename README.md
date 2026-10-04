@@ -1,11 +1,15 @@
-# Agent of Empires
-
-Your Claude Code sessions as villagers on a pixel-art map in the style of Age of Empires.
+<p align="center">
+  <img src="docs/media/banner.png" alt="Agent of Empires: your Claude Code sessions as villagers on an Age of Empires-style map" width="100%">
+</p>
 
 Every repository is a base, every Claude Code session is a villager working in it, and the
 villager's job on the map is what the agent is doing right now: mining gold while it reads,
 hammering at the forge while it runs commands, waving at you when it is your turn. A desktop app
 for Linux, built with Tauri 2.
+
+<p align="center">
+  <img src="docs/media/hero.gif" alt="The 3D map: villagers at work in five repositories, one finishing its turn and one ringing for approval, with the side panel listing who needs you" width="100%">
+</p>
 
 > The interface is in Brazilian Portuguese. A full guide to it lives in
 > [docs/MANUAL.pt-BR.md](docs/MANUAL.pt-BR.md). Translations are welcome.
@@ -32,6 +36,45 @@ for Linux, built with Tauri 2.
   tracked files are stone, and the tokens agents spent are blue crystals. Bases age up from
   Discovery to Imperial with the work done in them.
 - **Three views**: top-down pixel art, pixel isometric, and 3D in the style of Age of Empires III.
+
+## A quick tour
+
+The captures below run the real interface on demo data: the repositories, tasks and Slack reports
+are made up.
+
+### Approve from one place
+
+A blocked agent rings the town bell and its prompt lands in the side panel, with the full command.
+Approve it there and the villager goes back to work.
+
+<p align="center"><img src="docs/media/approve.gif" alt="A permission prompt for npm run migrate in the side panel; clicking Aprovar clears it and the villager answers OK" width="100%"></p>
+
+### Train a villager
+
+Click a town center, write the task and pick where it runs: a prefilled Cursor tab, the app
+itself, or your terminal. The new villager walks into the base.
+
+<p align="center"><img src="docs/media/deploy.gif" alt="Clicking the orbit-web town center opens its card; a task is typed and sent with No Cursor, and a new villager joins the base" width="100%"></p>
+
+### Three ways to see it
+
+Top-down pixel art, pixel isometric, and 3D. `V` switches between top-down and 3D, `Q` and `E`
+turn the camera.
+
+<p align="center"><img src="docs/media/views.gif" alt="The same village from above, in pixel isometric, then in 3D with the camera turning" width="100%"></p>
+
+### The side panel and the scout
+
+<img src="docs/media/panel.png" alt="The side panel: plan limits, an open approval, the scout O Batedor with two suggested missions" width="300" align="right">
+
+The side panel puts what needs you first: plan limits, open approvals, then every session with its
+phase, from exploring to answering.
+
+The scout, O Batedor, rides out to the Slack channels, Gmail searches or Notion pages you equip it
+with and comes back with missions: a bug, an improvement or an idea, the base it belongs to and a
+task ready to train a villager with. It only reads, and it never starts an agent by itself.
+
+<br clear="right">
 
 ## Requirements
 
