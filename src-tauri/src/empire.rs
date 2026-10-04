@@ -36,6 +36,36 @@ const RECENT_MESSAGE_IDS: usize = 16;
 const OUTPUT_WEIGHT: f64 = 5.0;
 const CACHE_WRITE_WEIGHT: f64 = 1.25;
 const CACHE_READ_WEIGHT: f64 = 0.1;
+// API list prices in US$ per million tokens (platform.claude.com/docs/en/about-claude/pricing,
+// October 2026): model prefix, input, output, cache read. A cache write costs 1.25x the input for 5
+// minutes and 2x for an hour on every model. The first prefix that matches wins: exact versions,
+// then the current price of the family, for a model newer than this table.
+const API_PRICES: &[(&str, f64, f64, f64)] = &[
+    ("claude-fable-5-1", 10.0, 50.0, 0.25),
+    ("claude-mythos-5-1", 10.0, 50.0, 0.25),
+    ("claude-fable-5", 10.0, 50.0, 1.0),
+    ("claude-mythos-5", 10.0, 50.0, 1.0),
+    ("claude-opus-5-5", 4.0, 20.0, 0.2),
+    ("claude-opus-5", 5.0, 25.0, 0.5),
+    ("claude-opus-4-8", 5.0, 25.0, 0.5),
+    ("claude-opus-4-7", 5.0, 25.0, 0.5),
+    ("claude-opus-4-6", 5.0, 25.0, 0.5),
+    ("claude-opus-4-5", 5.0, 25.0, 0.5),
+    ("claude-opus-4", 15.0, 75.0, 1.5), // Opus 4 and 4.1
+    ("claude-sonnet-5", 2.0, 10.0, 0.2), // Sonnet 5 and 5.5
+    ("claude-sonnet-4", 3.0, 15.0, 0.3), // Sonnet 4, 4.5 and 4.6
+    ("claude-haiku-4", 1.0, 5.0, 0.1),
+    ("claude-3-5-haiku", 0.8, 4.0, 0.08),
+    ("claude-fable", 10.0, 50.0, 0.25),
+    ("claude-mythos", 10.0, 50.0, 0.25),
+    ("claude-opus", 4.0, 20.0, 0.2),
+    ("claude-sonnet", 2.0, 10.0, 0.2),
+    ("claude-haiku", 1.0, 5.0, 0.1),
+];
+const CACHE_WRITE_5M_PRICE: f64 = 1.25;
+const CACHE_WRITE_1H_PRICE: f64 = 2.0;
+// Fast mode bills every kind of token at twice the price.
+const FAST_PRICE: f64 = 2.0;
 
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +107,8 @@ pub struct DayStats {
     pub agent_minutes: u32,
     /// Tokens agents spent that day, counted as tokens_week.
     pub tokens: u64,
+    /// What that day's replies would have cost at API list prices, cache reads included, in US$.
+    pub cost_usd: f64,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -86,6 +118,8 @@ pub struct Empire {
     pub repos: Vec<RepoStats>,
     /// The last 30 days, oldest first.
     pub days: Vec<DayStats>,
+    /// The Claude subscription, to set the API cost against what it charges.
+    pub plan: Option<crate::usage::Plan>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -105,21 +139,24 @@ struct AgentTime {
     total: u32,
     seconds_by_day: BTreeMap<i64, u32>,
     tokens_week: u64,
-    tokens_by_day: BTreeMap<i64, u64>,
+    spend_by_day: BTreeMap<i64, Spend>,
     session: Spend,
 }
 
-/// What agents spent: tokens as the empire counts them, and their weight against the plan's limits.
+/// What agents spent: tokens as the empire counts them, their weight against the plan's limits and
+/// their cost at API list prices (US$).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Spend {
     tokens: u64,
     weight: f64,
+    cost: f64,
 }
 
 impl Spend {
     fn add(&mut self, other: Spend) {
         self.tokens += other.tokens;
         self.weight += other.weight;
+        self.cost += other.cost;
     }
 }
 
@@ -136,7 +173,7 @@ struct TranscriptScan {
     offset: u64,
     last_at: Option<i64>,
     seconds_by_day: BTreeMap<i64, u32>,
-    tokens_by_day: BTreeMap<i64, u64>,
+    spend_by_day: BTreeMap<i64, Spend>,
     /// Spending per minute (epoch minutes), only as far back as a session window reaches.
     spend_by_minute: BTreeMap<i64, Spend>,
     /// Recent replies and what was already counted for each.
@@ -152,6 +189,7 @@ struct UsageEntry {
 #[derive(Deserialize)]
 struct UsageMessage {
     id: Option<String>,
+    model: Option<String>,
     usage: Option<Usage>,
 }
 
@@ -161,16 +199,40 @@ struct Usage {
     output_tokens: Option<u64>,
     cache_creation_input_tokens: Option<u64>,
     cache_read_input_tokens: Option<u64>,
+    cache_creation: Option<CacheCreation>,
+    speed: Option<String>,
+}
+
+/// The cache writes split by how long they last (Claude Code writes the 1-hour kind).
+#[derive(Deserialize)]
+struct CacheCreation {
+    ephemeral_1h_input_tokens: Option<u64>,
 }
 
 impl Usage {
     // Cache reads stay out of the token count (the same context reread every turn would dwarf the
-    // rest) but weigh on the limits.
-    fn spend(&self) -> Spend {
+    // rest) but weigh on the limits and on the cost.
+    fn spend(&self, model: Option<&str>) -> Spend {
         let [input, output, cache_write, cache_read] =
             [self.input_tokens, self.output_tokens, self.cache_creation_input_tokens, self.cache_read_input_tokens].map(Option::unwrap_or_default);
         let weight = input as f64 + output as f64 * OUTPUT_WEIGHT + cache_write as f64 * CACHE_WRITE_WEIGHT + cache_read as f64 * CACHE_READ_WEIGHT;
-        Spend { tokens: input + output + cache_write, weight }
+        Spend { tokens: input + output + cache_write, weight, cost: model.map_or(0.0, |model| self.api_cost(model)) }
+    }
+
+    // Unknown models ("<synthetic>", the error replies Claude Code writes itself) cost nothing.
+    fn api_cost(&self, model: &str) -> f64 {
+        let Some(&(_, input, output, cache_read)) = API_PRICES.iter().find(|(prefix, ..)| model.starts_with(prefix)) else { return 0.0 };
+        let [fresh, out, written, read] =
+            [self.input_tokens, self.output_tokens, self.cache_creation_input_tokens, self.cache_read_input_tokens].map(Option::unwrap_or_default);
+        let hour = self.cache_creation.as_ref().and_then(|split| split.ephemeral_1h_input_tokens).unwrap_or(0).min(written);
+        let five_minutes = written - hour;
+        let speed = if self.speed.as_deref() == Some("fast") { FAST_PRICE } else { 1.0 };
+        let dollars_per_mtok = fresh as f64 * input
+            + out as f64 * output
+            + five_minutes as f64 * input * CACHE_WRITE_5M_PRICE
+            + hour as f64 * input * CACHE_WRITE_1H_PRICE
+            + read as f64 * cache_read;
+        speed * dollars_per_mtok / 1_000_000.0
     }
 }
 
@@ -222,10 +284,11 @@ pub fn empire(session_start: Option<i64>) -> Empire {
             day_start: day * DAY_MS - utc_offset_ms(day * DAY_MS),
             commits: cache.git.values().map(|entry| entry.stats.commits_by_day.get(&day).copied().unwrap_or(0)).sum(),
             agent_minutes: time.values().map(|agent| agent.seconds_by_day.get(&day).copied().unwrap_or(0)).sum::<u32>() / 60,
-            tokens: time.values().map(|agent| agent.tokens_by_day.get(&day).copied().unwrap_or(0)).sum(),
+            tokens: time.values().map(|agent| agent.spend_by_day.get(&day).map_or(0, |spend| spend.tokens)).sum(),
+            cost_usd: time.values().map(|agent| agent.spend_by_day.get(&day).map_or(0.0, |spend| spend.cost)).sum(),
         })
         .collect();
-    Empire { generated_at: now, repos: list, days }
+    Empire { generated_at: now, repos: list, days, plan: crate::usage::plan() }
 }
 
 fn now_ms() -> i64 {
@@ -352,7 +415,7 @@ fn agent_time_by_repo(scans: &mut HashMap<PathBuf, TranscriptScan>, repos: &[Pro
                 for (day, seconds) in &scan.seconds_by_day {
                     *agent.seconds_by_day.entry(*day).or_insert(0) += seconds;
                 }
-                agent.add_tokens_by_day(scan, history_start);
+                agent.add_spend_by_day(scan, history_start);
                 seen.insert(path);
             } else if file.file_type().is_ok_and(|kind| kind.is_dir()) {
                 // Task subagents write under their session: their tokens count, their time is
@@ -363,7 +426,7 @@ fn agent_time_by_repo(scans: &mut HashMap<PathBuf, TranscriptScan>, repos: &[Pro
                     scan.advance(&path, len);
                     agent.tokens_week += scan.tokens_since(week_start);
                     agent.session.add(scan.spend_since(session_start));
-                    agent.add_tokens_by_day(scan, history_start);
+                    agent.add_spend_by_day(scan, history_start);
                     seen.insert(path);
                 }
             }
@@ -374,9 +437,9 @@ fn agent_time_by_repo(scans: &mut HashMap<PathBuf, TranscriptScan>, repos: &[Pro
 }
 
 impl AgentTime {
-    fn add_tokens_by_day(&mut self, scan: &TranscriptScan, first_day: i64) {
-        for (day, tokens) in scan.tokens_by_day.range(first_day..) {
-            *self.tokens_by_day.entry(*day).or_insert(0) += tokens;
+    fn add_spend_by_day(&mut self, scan: &TranscriptScan, first_day: i64) {
+        for (day, spend) in scan.spend_by_day.range(first_day..) {
+            self.spend_by_day.entry(*day).or_default().add(*spend);
         }
     }
 }
@@ -448,12 +511,16 @@ impl TranscriptScan {
         if !line.windows(USAGE_KEY.len()).any(|window| window == USAGE_KEY) {
             return;
         }
-        let Ok(UsageEntry { message: Some(UsageMessage { id, usage: Some(usage) }) }) = serde_json::from_slice(line) else { return };
-        let reply = usage.spend();
+        let Ok(UsageEntry { message: Some(UsageMessage { id, model, usage: Some(usage) }) }) = serde_json::from_slice(line) else { return };
+        let reply = usage.spend(model.as_deref());
         let mut fresh = reply;
         if let Some(id) = id {
             if let Some((_, counted)) = self.recent_replies.iter_mut().find(|(seen, _)| *seen == id) {
-                fresh = Spend { tokens: reply.tokens.saturating_sub(counted.tokens), weight: (reply.weight - counted.weight).max(0.0) };
+                fresh = Spend {
+                    tokens: reply.tokens.saturating_sub(counted.tokens),
+                    weight: (reply.weight - counted.weight).max(0.0),
+                    cost: (reply.cost - counted.cost).max(0.0),
+                };
                 counted.add(fresh);
             } else {
                 if self.recent_replies.len() == RECENT_MESSAGE_IDS {
@@ -462,7 +529,7 @@ impl TranscriptScan {
                 self.recent_replies.push_back((id, reply));
             }
         }
-        *self.tokens_by_day.entry(local_day(at)).or_insert(0) += fresh.tokens;
+        self.spend_by_day.entry(local_day(at)).or_default().add(fresh);
         let minute = at.div_euclid(MINUTE_MS);
         self.spend_by_minute.entry(minute).or_default().add(fresh);
         let oldest = minute - SESSION_WINDOW_MS / MINUTE_MS;
@@ -472,7 +539,7 @@ impl TranscriptScan {
     }
 
     fn tokens_since(&self, first_day: i64) -> u64 {
-        self.tokens_by_day.range(first_day..).map(|(_, tokens)| tokens).sum()
+        self.spend_by_day.range(first_day..).map(|(_, spend)| spend.tokens).sum()
     }
 
     fn spend_since(&self, start_ms: i64) -> Spend {
@@ -574,7 +641,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("cpo-empire-tokens-{}.jsonl", std::process::id()));
         let reply = |id: &str, output: u32, minute: u32| {
             format!(
-                r#"{{"message":{{"id":"{id}","role":"assistant","content":[],"usage":{{"input_tokens":3,"cache_creation_input_tokens":100,"cache_read_input_tokens":50000,"output_tokens":{output},"cache_creation":{{"ephemeral_5m_input_tokens":100}}}}}},"type":"assistant","timestamp":"2026-09-30T10:{minute:02}:00.000Z"}}"#
+                r#"{{"message":{{"id":"{id}","model":"claude-sonnet-4-5-20250929","role":"assistant","content":[],"usage":{{"input_tokens":3,"cache_creation_input_tokens":100,"cache_read_input_tokens":50000,"output_tokens":{output},"cache_creation":{{"ephemeral_5m_input_tokens":100}}}}}},"type":"assistant","timestamp":"2026-09-30T10:{minute:02}:00.000Z"}}"#
             )
         };
         let mut file = File::create(&path).unwrap();
@@ -589,7 +656,28 @@ mod tests {
         let day = local_day(at("2026-09-30T10:00:00.000Z"));
         assert_eq!(scan.tokens_since(day), (3 + 100 + 50) + (3 + 100 + 20));
         assert_eq!(scan.tokens_since(day + 1), 0);
+        // at Sonnet 4.5 prices, each reply once: input, output, 5-minute cache writes and reads
+        let reply_cost = |output: f64| (3.0 * 3.0 + output * 15.0 + 100.0 * 3.75 + 50000.0 * 0.3) / 1e6;
+        assert!((scan.spend_by_day[&day].cost - (reply_cost(50.0) + reply_cost(20.0))).abs() < 1e-12);
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn api_cost_prices_each_kind_of_token_by_model() {
+        let usage = |speed: &str| -> Usage {
+            serde_json::from_str(&format!(
+                r#"{{"input_tokens":1000000,"output_tokens":1000000,"cache_creation_input_tokens":2000000,"cache_read_input_tokens":10000000,"cache_creation":{{"ephemeral_1h_input_tokens":1000000}},"speed":"{speed}"}}"#
+            ))
+            .unwrap()
+        };
+        let standard = usage("standard");
+        // Opus 5.5: 4 input + 20 output + 5 (5-minute writes) + 8 (1-hour writes) + 2 (reads)
+        assert!((standard.api_cost("claude-opus-5-5") - 39.0).abs() < 1e-9);
+        assert!((standard.api_cost("claude-opus-5-5[1m]") - 39.0).abs() < 1e-9);
+        assert!((standard.api_cost("claude-opus-5") - (5.0 + 25.0 + 6.25 + 10.0 + 5.0)).abs() < 1e-9);
+        assert!((standard.api_cost("claude-opus-4-1-20250805") - (15.0 + 75.0 + 18.75 + 30.0 + 15.0)).abs() < 1e-9);
+        assert!((usage("fast").api_cost("claude-opus-5-5") - 78.0).abs() < 1e-9);
+        assert_eq!(standard.api_cost("<synthetic>"), 0.0);
     }
 
     #[test]
@@ -633,9 +721,10 @@ mod tests {
             let tokens: u64 = empire.repos.iter().map(|r| r.tokens_week).sum();
             let session: u64 = empire.repos.iter().map(|r| r.tokens_session).sum();
             let month_tokens: u64 = empire.days.iter().map(|d| d.tokens).sum();
+            let month_cost: f64 = empire.days.iter().map(|d| d.cost_usd).sum();
             // the history's last 7 days are the week the table counts
             assert_eq!(empire.days.iter().rev().take(WEEK_DAYS as usize).map(|d| d.tokens).sum::<u64>(), tokens);
-            println!("{pass}: {:?} · {} repos, {explored} explored, {gold} commits, {hours} agent hours and {tokens} tokens this week ({session} in the last 5 h), {all_hours} agent hours on disk, {month} commits and {month_tokens} tokens in 30 days", started.elapsed(), empire.repos.len());
+            println!("{pass}: {:?} · {} repos, {explored} explored, {gold} commits, {hours} agent hours and {tokens} tokens this week ({session} in the last 5 h), {all_hours} agent hours on disk, {month} commits and {month_tokens} tokens in 30 days, US$ {month_cost:.2} at API prices on {:?}", started.elapsed(), empire.repos.len(), empire.plan);
         }
         assert!(!empire(None).repos.is_empty());
     }

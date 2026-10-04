@@ -6,7 +6,7 @@ gate; two round towers with orange witch-hat roofs and lit windows flank it, joi
 recessed curtain walls, under a navy-to-purple starry sky. The silhouette is three spires so
 it still reads as "castle" at 32px in the dock, on light and dark panels alike.
 
-Writes the Tauri icons (window + tray) and the hicolor launcher sizes:
+Writes the Tauri icons (window + tray), the hicolor launcher sizes and the side panel logo:
     python3 scripts/gen-icon.py
 """
 
@@ -17,6 +17,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent.parent
 TAURI_ICONS = ROOT / "src-tauri" / "icons"
 LAUNCHER_ICONS = ROOT / "icons"
+PANEL_LOGO = ROOT / "src" / "logo.png"  # the side panel's title mark
 SIZE = 32
 
 PALETTE = {
@@ -99,6 +100,7 @@ def main() -> None:
     master = render()
     TAURI_ICONS.mkdir(parents=True, exist_ok=True)
     master.save(TAURI_ICONS / "32x32.png")
+    master.save(PANEL_LOGO)
     master.resize((128, 128), Image.NEAREST).save(TAURI_ICONS / "128x128.png")
     master.resize((512, 512), Image.NEAREST).save(TAURI_ICONS / "icon.png")
     for size in (32, 64, 128, 256, 512):

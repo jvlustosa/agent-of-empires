@@ -4,9 +4,8 @@ import { formatElapsed } from './kinds.js';
 import { drawGrass, drawTownCenter } from './sprites.js';
 
 const MAX_RESULTS = 50;
-// Canvas sizes in map pixels: the 40 x 36 town center plus its spires, on a bit of grass.
-const CARD_THUMB = { w: 96, h: 58 };
-const PREVIEW_THUMB = { w: 120, h: 58 };
+// Canvas size in map pixels: the 40 x 36 town center plus its spires, on a strip of grass.
+const CARD_THUMB = { w: 128, h: 58 };
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Under the staked land (or the town center) until the new agent shows up, per mode.
 const ARRIVAL_HINTS = { office: 'Começando aqui no app', cursor: 'Confirme o pedido no Cursor', terminal: 'Abrindo no terminal' };
@@ -103,7 +102,7 @@ export function createDeployDialog({ invoke, showToast, getAgents, getTeam, getD
     openMenu(anchor, `${project.name} · ${project.parent}`, items, button);
   }
 
-  function townThumb(project, { w, h }) {
+  function townThumb(project, { w, h } = CARD_THUMB) {
     const canvas = el('canvas', 'project-thumb');
     canvas.width = w;
     canvas.height = h;
@@ -116,7 +115,7 @@ export function createDeployDialog({ invoke, showToast, getAgents, getTeam, getD
   }
 
   function cardThumb(project) {
-    if (!thumbs.has(project.path)) thumbs.set(project.path, townThumb(project, CARD_THUMB));
+    if (!thumbs.has(project.path)) thumbs.set(project.path, townThumb(project));
     return thumbs.get(project.path);
   }
 
@@ -183,7 +182,7 @@ export function createDeployDialog({ invoke, showToast, getAgents, getTeam, getD
     const head = el('p', 'project-preview-name');
     head.append(el('strong', null, project.name), el('small', null, homeRelative(project.path)));
     head.title = project.path;
-    const parts = [townThumb(project, PREVIEW_THUMB), head];
+    const parts = [head];
     if (!info) parts.push(el('p', 'project-preview-note', 'Lendo o repositório…'));
     else if (info.error) parts.push(el('p', 'project-preview-note', `Não consegui ler o repositório: ${info.error}`));
     else parts.push(...previewDetails(project, info));

@@ -5,7 +5,7 @@
 import * as THREE from '../vendor/three/three.module.min.js';
 import * as S from './sprites.js';
 import { kindInfo } from './kinds.js';
-import { modelParts, modelsReady, villagerModel } from './models.js';
+import { horseModel, modelParts, modelsReady, villagerModel } from './models.js';
 import { CORE_WALLS } from './plot.js';
 import { mergeGeometries } from '../vendor/three/addons/utils/BufferGeometryUtils.js';
 
@@ -90,19 +90,29 @@ function sizeOf(design) {
 const MAX_SPAN = ERA_3D[4].w * SIZE_3D[3].scale;
 const MAX_DEPTH = ERA_3D[4].d * SIZE_3D[3].scale;
 const MIN_WALL = 6;
+// On grown land (design.growth, from plot.js: k 0 › 1) the town center grows with it, by these
+// fractions at k = 1: deeper into the bailey, as far as the room plot.js keeps clear behind it,
+// taller under a taller roof, and wider only as far as MAX_SPAN lets it.
+const GROW_3D = { span: 0.3, depth: 1, wall: 0.6, roof: 0.4 };
+// A half-lot core (design.growth.isSmall) has its town center at this scale, and its little mine
+// and forge at SMALL_SITE, so they keep to their corners.
+const SMALL_TC_3D = 0.7;
+const SMALL_SITE = 0.5;
 
-// The era's town center as the form and the free dimensions shape it; corner towers stay taller than
-// the walls they flank.
+// The era's town center as the form, the free dimensions and the land shape it; corner towers stay
+// taller than the walls they flank.
 function bodyOf(design) {
   const era = ERA_3D[Math.min(4, Math.max(0, design.era - 1))];
   const form = FORM_3D[design.form] ?? FORM_3D[1];
   const scale = sizeOf(design).scale;
   const isTurned = (design.rotation ?? 0) % 2 === 1; // its width runs front to back
-  const stretch = (value, percent, cap) => Math.min((value * (percent ?? 100)) / 100, Math.max(value, cap / scale));
-  const w = stretch(era.w * form.w, design.width, isTurned ? MAX_DEPTH : MAX_SPAN);
-  const d = stretch(era.d * form.d, design.depth, isTurned ? MAX_SPAN : MAX_DEPTH);
-  const wall = Math.max(MIN_WALL, (era.wall * form.wall * (design.height ?? 100)) / 100);
-  const roof = era.roof * form.roof;
+  const { k = 0, room = 0 } = design.growth ?? {};
+  const [span, deep, maxDeep] = [1 + k * GROW_3D.span, 1 + k * GROW_3D.depth, MAX_DEPTH + room];
+  const stretch = (value, percent, cap) => Math.min((value * percent) / 100, Math.max(value, cap / scale));
+  const w = stretch(era.w * form.w, (design.width ?? 100) * (isTurned ? deep : span), isTurned ? maxDeep : MAX_SPAN);
+  const d = stretch(era.d * form.d, (design.depth ?? 100) * (isTurned ? span : deep), isTurned ? MAX_SPAN : maxDeep);
+  const wall = Math.max(MIN_WALL, (era.wall * form.wall * (design.height ?? 100) * (1 + k * GROW_3D.wall)) / 100);
+  const roof = era.roof * form.roof * (1 + k * GROW_3D.roof);
   const tower = era.tower ? Math.max(era.tower, wall + roof / 2 + 4) : 0;
   // plan: how much deeper than the era's it is for its width (square roofs follow it)
   return { w, d, wall, roof, tower, windowY: Math.min(wall, era.wall) * 0.42, plan: d / era.d / (w / era.w), isTall: wall / era.wall > 1.5 };
@@ -147,6 +157,10 @@ const CROPS_3D = ['#e0c060', '#3f8a40', '#9bb84a'];
 const RESIZE_REBUILD_MS = 80;
 const WALL_THICK = 3;
 const MERLON_STEP = 4;
+// The stone wall round the map (Configurações › Borda do mapa), taller and thicker than a bailey's, on
+// a wider footing. The gatehouse's lintel clears the Batedor on horseback; its towers stand taller.
+const BORDER_WALL_3D = { height: 17, thick: 6, footH: 3, towerH: 28, radius: 6.5, roofH: 11 };
+const BORDER_GATE_3D = { clear: 24, lintelH: 7, towerScale: [1.15, 1.35, 1.15], bar: 2.5 };
 const ESCORT = [[-10, 2], [10, 2], [-15, -3], [15, -3], [-6, 7], [6, 7]];
 // The 2D work fronts in 3D: the tool, one swing in seconds, the shoulder angles (0 hangs, -π points
 // straight up), how far the body leans into the blow and what flies off where it lands.
@@ -167,7 +181,16 @@ const CLIP_FADE = 0.15; // seconds blending one clip into the next
 // Ready-made models (models.js) are about 2 units across: these sizes match the procedural props
 // they replace and keep the mine and the forge clear of the yard where villagers work them. A
 // villager stands about as tall as the procedural one, 14 units.
-const MODEL_SCALE = { tree: 15, mine: 16, forge: 20, villager: 6.5 };
+const MODEL_SCALE = { tree: 15, mine: 16, forge: 20, villager: 6.5, horse: 4.2 };
+// Where a rider sits on the horse (horse units, about its torso bone) and how high its hips stand
+// above its feet (villager units): the seat drops it onto the horse's back.
+const SADDLE = { y: 3.2, z: -0.35, seat: 0.36 };
+// The Batedor's barding over the horse's back (horse units): the aubergine cloth, a gold band at its hem.
+const BARDING = [
+  { w: 1.62, h: 0.9, d: 2.2, color: S.SLACK.aubergine },
+  { w: 1.66, h: 0.12, d: 2.24, color: S.SLACK.yellow },
+];
+const BARDING_AT = { y: 2.45, z: -0.35 };
 // The forge model's furnace mouth (model units, front +z): the fire glows in it, its light in front.
 const FORGE_MOUTH = { x: 0.21, y: 0.065, z: 0.33 };
 // Gold at the foot of the mine model's rock face, clear of its rails and crates (mine-local).
@@ -266,17 +289,18 @@ function playClip(model, name, at, dt) {
   model.mixer.update(dt);
 }
 
-// The rig's arms rest in a T, along ±x: a bone is turned from there about a model axis, over what the
-// clip did to it. Each arm bone's rest, kept when the villager is built.
-const ARM_BONES = ['upperarmr', 'lowerarmr', 'upperarml', 'lowerarml'];
+// The rig rests in a T, arms along ±x and legs straight down: a bone is turned from there about a
+// model axis, over what the clip did to it. Each limb bone's rest, kept when the villager is built.
+const LIMB_BONES = ['upperarmr', 'lowerarmr', 'upperarml', 'lowerarml', 'upperlegr', 'lowerlegr', 'upperlegl', 'lowerlegl'];
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
+const DOWN = new THREE.Vector3(0, -1, 0);
 const turn = new THREE.Quaternion();
 
-function armRests(root) {
+function limbRests(root) {
   root.updateMatrixWorld(true);
   const rootInv = root.getWorldQuaternion(new THREE.Quaternion()).invert();
   const inModel = (node) => rootInv.clone().multiply(node.getWorldQuaternion(new THREE.Quaternion()));
-  return Object.fromEntries(ARM_BONES.map((name) => {
+  return Object.fromEntries(LIMB_BONES.map((name) => {
     const bone = root.getObjectByName(name);
     return [name, { bone, world: inModel(bone), parentInv: inModel(bone.parent).invert() }];
   }));
@@ -291,6 +315,27 @@ function raiseArm(model, side, angle) {
     const { bone, world, parentInv } = model.rest[name];
     model.undo.push([bone, bone.quaternion.clone()]);
     bone.quaternion.copy(parentInv).multiply(turn.setFromAxisAngle(Z_AXIS, sign * bend)).multiply(world);
+  }
+}
+
+// Points a leg bone along `dir` (model space) from its rest straight down; `parentAim`, the turn
+// given to its parent bone, is taken back out so the two add up. Returns this bone's turn.
+function aimLeg(model, name, dir, parentAim) {
+  const { bone, world, parentInv } = model.rest[name];
+  model.undo.push([bone, bone.quaternion.clone()]);
+  const aim = new THREE.Quaternion().setFromUnitVectors(DOWN, dir.normalize());
+  bone.quaternion.copy(parentInv);
+  if (parentAim) bone.quaternion.multiply(parentAim.clone().invert());
+  bone.quaternion.multiply(aim).multiply(world);
+  return aim;
+}
+
+// Astride: thighs out and forward around the horse's back, shins down its flanks. The chibi legs
+// are short, so the knees open wide to clear the horse.
+function sitAstride(model) {
+  for (const [side, x] of [['l', 1], ['r', -1]]) {
+    const thigh = aimLeg(model, `upperleg${side}`, new THREE.Vector3(0.8 * x, -0.35, 0.45));
+    aimLeg(model, `lowerleg${side}`, new THREE.Vector3(0.25 * x, -1, 0.1), thigh);
   }
 }
 
@@ -332,6 +377,7 @@ export class World3D {
       this.markStatic();
       for (const entry of this.bases.values()) entry.key = '';
       if (this.preview) this.preview.key = '';
+      if (this.heroPreview) this.heroPreview.key = '';
       for (const entry of this.units.values()) this.dropUnit(entry); // dressed again as models
       this.units.clear();
     });
@@ -579,6 +625,7 @@ export class World3D {
     this.staticGroup.add(this.buildTerrain(w, h));
     this.staticGroup.add(this.buildGrass(w, h));
     this.staticGroup.add(this.buildWoods(w, h));
+    if (this.empire.borderWall) this.staticGroup.add(this.buildBorderWall(this.empire.borderWall));
     this.staticGroup.add(this.buildRiver(w));
     this.staticGroup.add(this.buildSquare());
     this.staticGroup.add(this.buildFog());
@@ -652,13 +699,15 @@ export class World3D {
     for (const base of e.bases.values()) {
       const { x, y } = base.pos;
       const { core, yards } = e.planOf(base);
-      const local = [...L.BASE_GROUND.patches, [6, L.BASE_GROUND.yardY - 4, L.PLOT_W - 12, 9], [L.BASE_GROUND.gate.x - 4, L.BASE_GROUND.yardY, 8, L.PLOT_H - L.BASE_GROUND.yardY]];
+      const lay = e.layoutOf(base);
+      const { ground } = lay;
+      const local = [...ground.patches, [6, ground.yardY - 4, lay.w - 12, 9], [ground.gate.x - 4, ground.yardY, 8, lay.h - ground.yardY]];
       const patches = [...local.map(([px, py, pw, ph]) => [core.x + px, core.y + py, pw, ph]), ...yards.map((yard) => [yard.x, yard.y, yard.w, yard.h])];
       for (const [grow, alpha] of [[4, 0.1], [2.5, 0.14], [1, 0.2], [0, 0.32]]) {
         ctx.fillStyle = `rgba(150, 126, 82, ${alpha})`;
         for (const [px, py, pw, ph] of patches) roundRect(x + px - grow, y + py - grow, pw + 2 * grow, ph + 2 * grow, 4 + grow);
       }
-      const { pen } = L.BASE_GROUND;
+      const { pen } = ground;
       pave(x + core.x + pen.x, y + core.y + pen.y, pen.w, pen.h);
     }
     // roads from the path grid: a darker edge everywhere first, then the worn middle, then pebbles
@@ -920,7 +969,8 @@ export class World3D {
       else if (prop.kind === 'rock') rocks.push({ x: prop.x, z: prop.y, s: 1 + prop.size * 0.3 });
     }
     const random = rng(42);
-    for (let i = 0; i < 520; i++) {
+    // the deep forest grows only round a forest edge: the stone wall stands in open country
+    for (let i = 0; i < (this.empire.borderWall ? 0 : 520); i++) {
       const x = -MARGIN + random() * (w + 2 * MARGIN);
       const z = -MARGIN + random() * (h + 2 * MARGIN);
       const isOutside = x < 4 || x > w - 4 || z < 4 || z > h - 2;
@@ -942,6 +992,65 @@ export class World3D {
     rocks.forEach((rock, i) => rockMesh.setMatrixAt(i, m.compose(new THREE.Vector3(rock.x, 0.8, rock.z), q, new THREE.Vector3(rock.s, rock.s * 0.7, rock.s))));
     rockMesh.count = rocks.length;
     for (const mesh of [bushMesh, rockMesh]) {
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+    return group;
+  }
+
+  // The stone wall round the map (empire.borderWall, world pixels): the runs, their footing and the
+  // gatehouse merged into one mesh, the merlons, the towers and the portcullis instanced, so the whole
+  // ring costs a handful of draw calls. The path is the ring opened at the gate: its two ends flank the
+  // main road, and so do its first and last towers.
+  buildBorderWall({ path, towers, roof }) {
+    const { height, thick, footH, towerH, radius, roofH } = BORDER_WALL_3D;
+    const { clear, lintelH, towerScale, bar } = BORDER_GATE_3D;
+    const stone = this.mat(STYLE_3D.prontera.wall);
+    const group = new THREE.Group();
+    const parts = [];
+    const merlons = [];
+    const slab = (w, h, d, x, y, z, angle = 0) => parts.push(new THREE.BoxGeometry(w, h, d).rotateY(angle).translate(x, y + h / 2, z));
+    for (let i = 1; i < path.length; i++) {
+      const [ax, az] = path[i - 1];
+      const [bx, bz] = path[i];
+      const length = Math.hypot(bx - ax, bz - az);
+      const angle = -Math.atan2(bz - az, bx - ax);
+      const [mx, mz] = [(ax + bx) / 2, (az + bz) / 2];
+      slab(length + thick, height, thick, mx, 0, mz, angle);
+      slab(length + thick + 2, footH, thick + 2, mx, 0, mz, angle);
+      for (let k = MERLON_STEP / 2; k < length; k += MERLON_STEP) merlons.push({ x: ax + ((bx - ax) * k) / length, y: height + 1, z: az + ((bz - az) * k) / length, angle });
+    }
+    const [gateX0, gateZ] = path.at(-1);
+    const [gateX1] = path[0];
+    slab(gateX1 - gateX0, lintelH, thick + 2, (gateX0 + gateX1) / 2, clear, gateZ);
+    for (let x = gateX0 + MERLON_STEP / 2; x < gateX1; x += MERLON_STEP) merlons.push({ x, y: clear + lintelH + 1, z: gateZ, angle: 0 });
+    const wall = this.mesh(mergeGeometries(parts), stone);
+    parts.forEach((part) => part.dispose());
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const one = new THREE.Vector3(1, 1, 1);
+    const merlonMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(2, 2.4, thick + 0.4), stone, merlons.length);
+    merlons.forEach(({ x, y, z, angle }, i) => merlonMesh.setMatrixAt(i, m.compose(new THREE.Vector3(x, y, z), q.setFromAxisAngle(UP, angle), one)));
+    // the portcullis drawn up against the lintel's outer face (the one the camera opens on), its
+    // teeth showing under it
+    const grille = [];
+    const [gridZ, gridH] = [gateZ + thick / 2 + 1.4, lintelH + 3];
+    for (let x = gateX0 + bar; x < gateX1 - bar / 2; x += bar) grille.push([x, clear - 3 + gridH / 2, 0.6, gridH]);
+    for (const y of [clear - 1, clear + lintelH - 2]) grille.push([(gateX0 + gateX1) / 2, y, gateX1 - gateX0 - 2 * bar, 0.6]);
+    const portcullis = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 0.5), this.mat('#3b3f4a'), grille.length);
+    grille.forEach(([x, y, w, h], i) => portcullis.setMatrixAt(i, m.compose(new THREE.Vector3(x, y, gridZ), q.identity(), new THREE.Vector3(w, h, 1))));
+    const body = new THREE.CylinderGeometry(radius, radius + 0.6, towerH, 12).translate(0, towerH / 2, 0);
+    const cap = new THREE.ConeGeometry(radius + 1.4, roofH, 12).translate(0, towerH + roofH / 2, 0);
+    const gateScale = new THREE.Vector3(...towerScale);
+    const towerMeshes = [[body, stone], [cap, this.mat(roof[0])]].map(([geometry, material]) => {
+      const mesh = new THREE.InstancedMesh(geometry, material, towers.length);
+      q.identity();
+      towers.forEach(([x, z], i) => mesh.setMatrixAt(i, m.compose(new THREE.Vector3(x, 0, z), q, i === 0 || i === towers.length - 1 ? gateScale : one)));
+      return mesh;
+    });
+    group.add(wall);
+    for (const mesh of [merlonMesh, portcullis, ...towerMeshes]) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       group.add(mesh);
@@ -1543,28 +1652,30 @@ export class World3D {
    * The town center at its size and turn, plus the walls of the bigger sizes, in base-local (core)
    * coordinates. `tc` is the building alone: it rises from the ground and swells on an age-up. On
    * grown land `bailey` ({ path, towers, keep }, core-local, from plot.js) walls in the land behind
-   * the town center, whatever the size.
+   * the town center, whatever the size. `box` is the town center's 2D box in its core; a half-lot
+   * core's stands smaller and without the bigger sizes' walls.
    */
-  buildCastle(design, team, bailey = null) {
-    const L = this.L;
+  buildCastle(design, team, bailey = null, box = this.L.TOWN_CENTER) {
     const era = ERA_3D[Math.min(4, Math.max(0, design.era - 1))];
     const body = bodyOf(design);
     const size = sizeOf(design);
+    const isSmall = Boolean(design.growth?.isSmall);
+    const scale = size.scale * (isSmall ? SMALL_TC_3D : 1);
     const group = new THREE.Group();
     const tc = this.buildTownCenter(design, team);
     const pivot = new THREE.Group();
     pivot.add(tc);
-    pivot.scale.setScalar(size.scale);
+    pivot.scale.setScalar(scale);
     pivot.rotation.y = -(design.rotation ?? 0) * (Math.PI / 2);
     // a bigger or shallower town center grows back and sideways: the face toward the yard (the door,
     // unless turned) stays on it
     const deep = (design.rotation ?? 0) % 2 === 1 ? body.w : body.d;
-    const z = L.TOWN_CENTER.y + L.TOWN_CENTER.h / 2 + 4 + era.d / 2 - (size.scale * deep) / 2;
-    pivot.position.set(L.TOWN_CENTER.x + L.TOWN_CENTER.w / 2, 0, z);
+    const z = box.y + box.h / 2 + 4 + era.d / 2 - (scale * deep) / 2;
+    pivot.position.set(box.x + box.w / 2, 0, z);
     group.add(pivot);
     const big = SIZE_3D[2];
     if (bailey) group.add(this.buildWalls(design, team, { ...size, wall: Math.max(size.wall, big.wall), tower: Math.max(size.tower, big.tower) }, bailey));
-    else if (size.wall) group.add(this.buildWalls(design, team, size));
+    else if (size.wall && !isSmall) group.add(this.buildWalls(design, team, size));
     return { group, tc };
   }
 
@@ -1652,6 +1763,8 @@ export class World3D {
     const wall = isHut ? '#8a5a32' : STYLE_3D[style].wall;
     for (const b of plan.buildings) if (b.kind !== 'keep') group.add(this.buildHouse(b, wall, isHut, team, glass));
     for (const field of plan.fields) group.add(this.buildField(field));
+    const sails = [];
+    for (const p of plan.props) group.add(this.buildProp(p, team, sails));
     const trees = plan.trees.map((tree) => ({ x: tree.x, z: tree.y, s: 0.75 + tree.size * 0.15 }));
     const [pine, fir] = [modelParts('pine'), modelParts('fir')];
     if (trees.length) for (const mesh of pine && fir ? this.modelTrees(trees, [pine, fir]) : this.primitiveTrees(trees)) group.add(Object.assign(mesh, { castShadow: true, receiveShadow: true }));
@@ -1668,7 +1781,59 @@ export class World3D {
       well.position.set(plan.well.x, 0, plan.well.y - 6); // 2D stands it from its foot
       group.add(well);
     }
-    return { group, glass };
+    return { group, glass, sails };
+  }
+
+  // What else the village grew, on its footprint: a haystack, a woodpile, a market stall in the
+  // team's stripes, a windmill (its sails go into `sails`, to turn) or a pond.
+  buildProp(p, team, sails) {
+    const prop = new THREE.Group();
+    if (p.kind === 'haystack') {
+      const hay = this.mesh(new THREE.SphereGeometry(1, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), this.mat('#e0c060', { flatShading: true }));
+      hay.scale.set(p.w / 2, 5, p.h / 2);
+      prop.add(hay);
+    } else if (p.kind === 'woodpile') {
+      const logs = this.mat('#8a5a32');
+      const gap = (p.w - 3) / 2;
+      for (const [x, y] of [[-gap, 1.3], [0, 1.3], [gap, 1.3], [-gap / 2, 3.6], [gap / 2, 3.6]]) {
+        const log = this.mesh(new THREE.CylinderGeometry(1.3, 1.3, p.h, 6), logs);
+        log.rotation.x = Math.PI / 2;
+        log.position.set(x, y, 0);
+        prop.add(log);
+      }
+    } else if (p.kind === 'stall') {
+      for (const [x, z] of [[-p.w / 2 + 0.6, -p.h / 2 + 0.6], [p.w / 2 - 0.6, -p.h / 2 + 0.6], [-p.w / 2 + 0.6, p.h / 2 - 0.6], [p.w / 2 - 0.6, p.h / 2 - 0.6]]) prop.add(this.box(0.8, 9, 0.8, '#5e3c20', x, 0, z));
+      prop.add(this.box(p.w - 1, 3, 2.4, '#8a5a32', 0, 0, p.h / 2 - 1.4));
+      const stripe = p.w / 4;
+      for (let i = 0; i < 4; i++) prop.add(this.box(stripe, 0.6, p.h + 1.6, i % 2 ? '#f4f4f0' : team[0], -p.w / 2 + stripe * (i + 0.5), 9, 0));
+    } else if (p.kind === 'windmill') {
+      const tower = this.mesh(new THREE.CylinderGeometry(3.4, 5, 17, 8), this.mat('#d8c7a2'));
+      tower.position.y = 8.5;
+      const cap = this.mesh(new THREE.ConeGeometry(4.4, 5, 8), this.mat(team[0]));
+      cap.position.y = 19.5;
+      const hub = new THREE.Group();
+      hub.position.set(0, 15, 4);
+      for (let k = 0; k < 4; k++) {
+        const arm = new THREE.Group();
+        arm.rotation.z = (k * Math.PI) / 2;
+        arm.add(this.box(0.6, 10, 0.4, '#5e3c20', 0, 0.5, 0), this.box(2.2, 7, 0.2, '#f4f4f0', 1.4, 3.5, 0));
+        hub.add(arm);
+      }
+      hub.userData.phase = (p.seed % 628) / 100;
+      sails.push(hub);
+      prop.add(tower, cap, hub, this.box(2.4, 4, 0.4, '#3a2716', 0, 0, 4.6));
+    } else if (p.kind === 'pond') {
+      const rim = this.mesh(new THREE.CircleGeometry(1, 20), this.mat('#6a9a48'), { cast: false });
+      const water = this.mesh(new THREE.CircleGeometry(1, 20), this.mat('#3b6fa8', { roughness: 0.2 }), { cast: false });
+      for (const [disc, grow, y] of [[rim, 1.5, 0.2], [water, 0, 0.3]]) {
+        disc.rotation.x = -Math.PI / 2;
+        disc.scale.set(p.w / 2 + grow, p.h / 2 + grow, 1);
+        disc.position.y = y;
+        prop.add(disc);
+      }
+    }
+    prop.position.set(p.x + p.w / 2, 0, p.y + p.h / 2);
+    return prop;
   }
 
   // A hall, house or barn on its footprint, the door on the front (+z), the ridge along its axis.
@@ -1785,6 +1950,55 @@ export class World3D {
     p.renderer.render(p.scene, p.camera);
   }
 
+  /**
+   * The Batedor's equipment window: the hero as the 3D map shows it (horse, rider and gear of its
+   * level, `look.tunic`), on a patch of ground, turning slowly, on the window's own canvas and WebGL
+   * context. The horse stands and grazes, the pennant flaps and the aura pulses with `t`.
+   */
+  renderHeroPreview(canvas, look, t) {
+    if (this.heroPreview?.canvas !== canvas) {
+      this.heroPreview?.renderer.dispose();
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.05;
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color('#1c1711'); // the equipment window's own brown
+      scene.add(new THREE.HemisphereLight('#cfe4ff', '#55602f', 1.2));
+      const sun = new THREE.DirectionalLight('#ffe2b0', 2.4);
+      sun.position.set(-40, 90, 70);
+      const ground = this.mesh(new THREE.CircleGeometry(24, 40), this.mat('#3d3322'), { cast: false });
+      ground.rotation.x = -Math.PI / 2;
+      scene.add(sun, ground);
+      const camera = new THREE.PerspectiveCamera(30, 1, 1, 500);
+      this.heroPreview = { canvas, renderer, scene, camera, key: '', entry: null };
+    }
+    const p = this.heroPreview;
+    if (look.tunic !== p.key) {
+      if (p.entry) {
+        p.scene.remove(p.entry.group);
+        p.entry.parts.model?.root.traverse((node) => node.skeleton?.dispose());
+      }
+      p.entry = this.buildKnight(look);
+      p.scene.add(p.entry.group);
+      p.key = look.tunic;
+    }
+    const { entry } = p;
+    const ch = { look, walkClock: 0 };
+    if (entry.parts.rider) this.poseMount(entry, ch, t, { isWalking: false, isDangling: false });
+    this.poseKnight(entry, ch, t, false);
+    entry.parts.scroll.visible = false; // the missions have their own tab
+    entry.group.rotation.y = 0.6 + t * 0.45;
+    const width = canvas.clientWidth || canvas.width;
+    const height = canvas.clientHeight || canvas.height;
+    p.renderer.setSize(width, height, false);
+    p.camera.aspect = width / height;
+    p.camera.updateProjectionMatrix();
+    p.camera.position.set(0, 30, 58); // horse and lance fill the window
+    p.camera.lookAt(0, 17, 0);
+    p.renderer.render(p.scene, p.camera);
+  }
+
   // The waiting pen's low fence (core-local): two rails per side and a post every ~5 units, one
   // geometry shared by every base, so rebuilding a base never makes (or leaks) another.
   waitFenceGeometry() {
@@ -1806,23 +2020,26 @@ export class World3D {
   }
 
   buildBase(base, design) {
-    const L = this.L;
     const [team, teamShade] = base.team;
     const group = new THREE.Group();
     const parts = {};
     // the land plot.js grew; the core (everything base-local below) stands on its bottom edge
     const plan = this.empire.planOf(base);
+    const lay = this.empire.layoutOf(base); // a lot's core, or the half-lot one
+    const site = lay.isSmall ? SMALL_SITE : 1;
     const [cx, cz] = [plan.core.x, plan.core.y];
     const toCore = ([x, y]) => [x - cx, y - cz];
     const keep = plan.buildings.find((b) => b.kind === 'keep');
     const bailey = plan.walls && { path: plan.walls.map(toCore), towers: plan.towers.map(toCore), keep: keep && { ...keep, x: keep.x - cx, y: keep.y - cz } };
-    // town center: center of its 2D box, front facing the yard (turned and sized as designed)
-    const { group: castle, tc } = this.buildCastle(design, base.team, bailey);
+    // town center: center of its 2D box, front facing the yard (turned and sized as designed, grown
+    // with the land)
+    const { group: castle, tc } = this.buildCastle({ ...design, growth: plan.growth }, base.team, bailey, lay.tc);
     castle.userData.hit = { project: base.project };
     castle.position.set(cx, 0, cz);
     group.add(castle);
     const land = this.buildLand(plan, design, base.team);
     parts.villageGlass = land.glass;
+    parts.sails = land.sails;
     group.add(land.group);
     // the top of the town center's roof (turned and sized), where the balloon over it points
     castle.updateMatrixWorld(true);
@@ -1847,7 +2064,8 @@ export class World3D {
       nugget.position.set(gx, 1, gz);
       mine.add(nugget);
     }
-    mine.position.set(cx + 18, 0, cz + (mineModel ? 21 : 22));
+    mine.scale.setScalar(site);
+    mine.position.set(cx + lay.mine.foot[0], 0, cz + lay.mine.foot[1] - (mineModel ? 9 : 8) * site); // 2D stands it from its foot
     // forge: the blacksmith model (roof in the team color) or an open shed over the furnace, fire
     // glowing when someone works the terminal
     const forge = new THREE.Group();
@@ -1870,7 +2088,8 @@ export class World3D {
     parts.forgeLight = new THREE.PointLight('#ff7a2a', 0, 60, 1.8);
     parts.forgeLight.position.set(mouth.x, 6, mouth.z + 3);
     forge.add(parts.forgeLight);
-    forge.position.set(cx + 110, 0, cz + 20);
+    forge.scale.setScalar(site);
+    forge.position.set(cx + lay.forge.foot[0], 0, cz + lay.forge.foot[1] - 12 * site);
     // banner in the team color
     const banner = new THREE.Group();
     banner.add(this.box(0.8, 26, 0.8, '#5e3c20', 0, 0, 0));
@@ -1878,7 +2097,8 @@ export class World3D {
     parts.flag.geometry.translate(4.5, 0, 0);
     parts.flag.position.set(0.4, 22, 0);
     banner.add(parts.flag);
-    banner.position.set(cx + L.BANNER.x, 0, cz + L.BANNER.y);
+    if (lay.banner) banner.position.set(cx + lay.banner.x, 0, cz + lay.banner.y);
+    banner.visible = Boolean(lay.banner); // a half-lot core has none
     banner.userData.hit = { project: base.project };
     // the bell, up only while an agent here is blocked on you
     parts.bell = new THREE.Group();
@@ -1887,9 +2107,15 @@ export class World3D {
     parts.bellBody.geometry.translate(0, -2.5, 0);
     parts.bellBody.position.y = 17.4;
     parts.bell.add(parts.bellBody);
-    parts.bell.position.set(cx + L.BELL.x, 0, cz + L.BELL.y);
+    parts.bell.position.set(cx + lay.bell.x, 0, cz + lay.bell.y);
     // the waiting pen's fence: who waits on you stands apart from who works
-    const fence = this.mesh(this.waitFenceGeometry(), this.mat('#8a5a32'));
+    // (a half-lot core's bench instead)
+    let fence;
+    if (lay.bench) {
+      const { x, y, w } = lay.bench;
+      fence = new THREE.Group();
+      fence.add(this.box(w, 1.2, 3, '#8a5a32', x + w / 2, 2.6, y - 2), this.box(1, 2.6, 2.4, '#5e3c20', x + 1.5, 0, y - 2), this.box(1, 2.6, 2.4, '#5e3c20', x + w - 1.5, 0, y - 2));
+    } else fence = this.mesh(this.waitFenceGeometry(), this.mat('#8a5a32'));
     fence.position.set(cx, 0, cz);
     // territory: a dashed line around the plot, and a glow for the base picked or hovered
     parts.territory = this.outline(plan.w, plan.h, 0.6, new THREE.LineDashedMaterial({ color: team, dashSize: 4, gapSize: 3, transparent: true, opacity: 0.9 }));
@@ -1908,7 +2134,7 @@ export class World3D {
       tip.rotation.y = Math.PI / 4;
       tip.position.y = 31;
       obelisk.add(shaft, tip);
-      obelisk.position.set(cx + 16, 0, cz + 74);
+      obelisk.position.set(cx + lay.obelisk[0], 0, cz + lay.obelisk[1] - 2);
       group.add(obelisk);
     }
     if (wonders.includes('beacon')) {
@@ -1920,11 +2146,11 @@ export class World3D {
       parts.beaconLight = new THREE.PointLight('#ff8a3c', 0, 90, 1.6);
       parts.beaconLight.position.y = 26;
       beacon.add(tower, fire, parts.beaconLight);
-      beacon.position.set(cx + 120, 0, cz + 76);
+      beacon.position.set(cx + lay.beacon[0], 0, cz + lay.beacon[1] - 2);
       group.add(beacon);
     }
     parts.beam = new THREE.Mesh(new THREE.CylinderGeometry(9, 14, 140, 20, 1, true), new THREE.MeshBasicMaterial({ color: '#fde68a', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
-    parts.beam.position.set(cx + L.TOWN_CENTER.x + L.TOWN_CENTER.w / 2, 70, cz + L.TOWN_CENTER.y + L.TOWN_CENTER.h / 2 + 4);
+    parts.beam.position.set(cx + lay.tc.x + lay.tc.w / 2, 70, cz + lay.tc.y + lay.tc.h / 2 + 4);
     parts.beam.visible = false;
     group.add(mine, forge, banner, fence, parts.bell, parts.territory, parts.glow, parts.beam);
     parts.tc = tc;
@@ -1976,6 +2202,7 @@ export class World3D {
       parts.fire.material.emissiveIntensity = (isForging ? 2.2 : 1) + 0.4 * Math.sin(t * 13);
       parts.forgeLight.intensity = (sky.isNight ? 1 : 0.15) * (isForging ? 900 : 350);
       parts.flag.rotation.y = Math.sin(t * 2.4 + base.pos.x) * 0.35;
+      for (const hub of parts.sails) hub.rotation.z = -(t * 0.9 + hub.userData.phase);
       if (parts.beaconLight) parts.beaconLight.intensity = sky.isNight ? 1200 : 200;
       // the age-up beam: a column of gold light over the town center for a few seconds
       const ageUp = e.celebrations.get(base.project);
@@ -2052,7 +2279,7 @@ export class World3D {
   // Its rig plays a clip per pose (poseModel); the tools ride its bones, in model units.
   buildModelVillager(model) {
     const group = new THREE.Group();
-    model.rest = armRests(model.root);
+    model.rest = limbRests(model.root);
     model.undo = [];
     model.root.scale.setScalar(MODEL_SCALE.villager);
     model.mixer = new THREE.AnimationMixer(model.root);
@@ -2190,7 +2417,44 @@ export class World3D {
     return { chips, chipMaterial };
   }
 
+  // A horse from models.js with a villager model on its back, riding its torso bone so it rocks
+  // with the gallop. Null until both have loaded.
+  buildMount(look, rider) {
+    const horse = horseModel(look);
+    if (!horse || !rider) return null;
+    const group = new THREE.Group();
+    horse.root.scale.setScalar(MODEL_SCALE.horse);
+    horse.mixer = new THREE.AnimationMixer(horse.root);
+    rider.rest = limbRests(rider.root);
+    rider.undo = [];
+    rider.root.scale.setScalar(MODEL_SCALE.villager);
+    rider.root.position.set(0, SADDLE.y * MODEL_SCALE.horse - SADDLE.seat * MODEL_SCALE.villager, SADDLE.z * MODEL_SCALE.horse);
+    rider.mixer = new THREE.AnimationMixer(rider.root);
+    group.add(horse.root, rider.root);
+    group.updateMatrixWorld(true);
+    horse.root.getObjectByName('Torso').attach(rider.root);
+    return { group, parts: { model: horse, rider } };
+  }
+
+  // Mounted: the horse gallops in step with the 2D frames (in the air too, held up by the pointer) or
+  // stands, grazing now and then; the rider sits astride over its idle.
+  poseMount(entry, ch, t, { isWalking, isDangling }) {
+    const { model: horse, rider } = entry.parts;
+    const dt = Math.min(0.1, t - (entry.clock ?? t));
+    entry.clock = t;
+    for (const [bone, quaternion] of rider.undo) bone.quaternion.copy(quaternion);
+    rider.undo.length = 0;
+    const phase = t + (ch.look.seed % 1000) / 97;
+    if (isWalking || isDangling) playClip(horse, 'Gallop', isDangling ? t * 3 : (ch.walkClock * 14) / (2 * Math.PI), dt);
+    else if (phase % 14 < 8) playClip(horse, 'Idle', phase / horse.clips.Idle.duration, dt);
+    else playClip(horse, 'Eating', ((phase % 14) - 8) / horse.clips.Eating.duration, dt);
+    playClip(rider, 'Idle', phase / rider.clips.Idle.duration, dt);
+    sitAstride(rider);
+  }
+
   buildScout(look) {
+    const mount = this.buildMount(look, villagerModel(look));
+    if (mount) return mount;
     const group = new THREE.Group();
     const [coat, shade] = look.horse;
     const horse = new THREE.Group();
@@ -2206,8 +2470,57 @@ export class World3D {
   }
 
   // O Batedor: a barded horse, a rider in armor of its level (look.tunic), the lance raised with its
-  // pennant, and the shield with the Slack mark painted from the same pixels as the 2D one.
+  // pennant, and the shield with the Slack mark painted from the same pixels as the 2D one. With the
+  // models loaded, the horse and the KayKit knight (tabard and cape aubergine), else blocks.
   buildKnight(look) {
+    const rider = villagerModel(look, { character: 'knight', hat: true, paint: { team: S.SLACK.aubergine, armor: look.tunic, skin: look.skin, hair: look.hair } });
+    const mount = this.buildMount(look, rider);
+    if (!mount) return this.buildBlockKnight(look);
+    const { group, parts } = mount;
+    const { horse } = MODEL_SCALE;
+    const bone = (root, name) => root.getObjectByName(name);
+    const torso = bone(parts.model.root, 'Torso');
+    for (const { w, h, d, color } of BARDING) torso.attach(this.box(w * horse, h * horse, d * horse, color, 0, BARDING_AT.y * horse, BARDING_AT.z * horse));
+    // lance, shield and plume ride the rider's bones, set where its idle holds them
+    playClip(parts.rider, 'Idle', 0, 0);
+    const at = (name) => bone(parts.rider.root, name).getWorldPosition(new THREE.Vector3());
+    const lance = this.mesh(new THREE.CylinderGeometry(0.3, 0.3, 24, 6), this.mat('#8a5a32'));
+    lance.position.copy(at('handslotr')).add(new THREE.Vector3(-1.2, 4, 0.4)); // upright at its right side, clear of the face
+    lance.rotation.x = 0.15;
+    parts.pennant = new THREE.Group(); // the flag streams back from the lance's tip
+    parts.pennant.position.y = 10.6;
+    const pennant = this.mesh(new THREE.PlaneGeometry(4.4, 2.6), new THREE.MeshBasicMaterial({ map: this.knightTexture('pennant'), transparent: true, alphaTest: 0.5, side: THREE.DoubleSide }), { cast: false });
+    pennant.position.x = 2.2;
+    parts.pennant.add(pennant);
+    lance.add(parts.pennant);
+    bone(parts.rider.root, 'handslotr').attach(lance);
+    const shield = this.mesh(new THREE.PlaneGeometry(4.2, 5.4), new THREE.MeshBasicMaterial({ map: this.knightTexture('shield'), transparent: true, alphaTest: 0.5, side: THREE.DoubleSide }), { cast: false });
+    shield.position.copy(at('handslotl')).add(new THREE.Vector3(1.2, 2.4, 0));
+    shield.rotation.y = Math.PI / 2; // facing out, the mark the right way round
+    bone(parts.rider.root, 'lowerarml').attach(shield);
+    parts.plume = this.mesh(new THREE.ConeGeometry(0.14, 0.55, 6), this.mat(S.SLACK.red));
+    parts.plume.position.set(0, 1.25, -0.06); // on the helmet's crest, in the head bone's units
+    bone(parts.rider.root, 'head').add(parts.plume);
+    this.addKnightAura(group, parts);
+    return { group, parts };
+  }
+
+  // The mission scroll over its head and the aura on the ground, whichever body it has.
+  addKnightAura(group, parts) {
+    parts.scroll = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.knightTexture('scroll'), depthTest: false, transparent: true }));
+    parts.scroll.scale.set(7, 5, 1);
+    parts.scroll.renderOrder = 10;
+    // The aura, always on: a soft gold light on the ground and a ring around the horse.
+    parts.aura = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshBasicMaterial({ map: this.knightTexture('aura'), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    parts.aura.rotation.x = -Math.PI / 2;
+    parts.aura.position.y = 0.4;
+    parts.auraRing = new THREE.Mesh(new THREE.RingGeometry(9.4, 10.4, 48), new THREE.MeshBasicMaterial({ color: S.SLACK.yellow, transparent: true, depthWrite: false }));
+    parts.auraRing.rotation.x = -Math.PI / 2;
+    parts.auraRing.position.y = 0.5;
+    group.add(parts.scroll, parts.aura, parts.auraRing);
+  }
+
+  buildBlockKnight(look) {
     const group = new THREE.Group();
     const parts = {};
     const [coat, shade] = look.horse;
@@ -2233,10 +2546,8 @@ export class World3D {
     const shield = flat(this.knightTexture('shield'), 4.2, 5.4);
     shield.position.set(-2.7, 14.5, 0);
     shield.rotation.y = -Math.PI / 2;
-    parts.scroll = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.knightTexture('scroll'), depthTest: false, transparent: true }));
-    parts.scroll.scale.set(7, 5, 1);
-    parts.scroll.renderOrder = 10;
-    group.add(horse, body, tabard, helm, parts.plume, lance, parts.pennant, shield, parts.scroll);
+    group.add(horse, body, tabard, helm, parts.plume, lance, parts.pennant, shield);
+    this.addKnightAura(group, parts);
     return { group, parts };
   }
 
@@ -2244,18 +2555,20 @@ export class World3D {
   knightTexture(name) {
     this.knightTextures ??= new Map();
     if (!this.knightTextures.has(name)) {
-      const size = { shield: [7, 9], pennant: [4, 4], scroll: [10, 8] }[name];
+      const size = { shield: [7, 9], pennant: [4, 4], scroll: [10, 8], aura: [8, 8] }[name];
       const canvas = document.createElement('canvas');
       [canvas.width, canvas.height] = size.map((side) => side * 8);
       const ctx = canvas.getContext('2d');
       ctx.scale(8, 8);
-      if (name === 'shield') S.drawSlackShield(ctx, 0, 0);
+      if (name === 'aura') S.drawGlow(ctx, 4, 4, 4, S.SLACK.yellow, 0.9);
+      else if (name === 'shield') S.drawSlackShield(ctx, 0, 0);
       else if (name === 'scroll') S.drawMissionScroll(ctx, 5, 8);
       else [S.SLACK.blue, S.SLACK.green, S.SLACK.yellow, S.SLACK.red].forEach((color, row) => S.rect(ctx, 0, row, 4, 1, color));
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
-      texture.magFilter = THREE.NearestFilter;
-      texture.minFilter = THREE.NearestFilter;
+      const filter = name === 'aura' ? THREE.LinearFilter : THREE.NearestFilter; // the glow stays soft, the pixels sharp
+      texture.magFilter = filter;
+      texture.minFilter = filter;
       texture.generateMipmaps = false;
       this.knightTextures.set(name, texture);
     }
@@ -2263,13 +2576,17 @@ export class World3D {
   }
 
   poseKnight({ parts }, ch, t, isWalking) {
-    parts.legs.forEach((leg, index) => {
+    parts.legs?.forEach((leg, index) => {
       leg.rotation.x = isWalking ? Math.sin(ch.walkClock * 14 + (index === 0 || index === 3 ? 0 : Math.PI)) * 0.45 : 0;
     });
     parts.pennant.rotation.y = Math.PI / 2 + Math.sin(t * (isWalking ? 12 : 6)) * 0.3;
     parts.plume.rotation.x = Math.sin(t * 5) * 0.15;
     parts.scroll.visible = this.empire.scout.missions.size > 0;
-    parts.scroll.position.y = 30 + Math.sin(t * 3) * 0.6;
+    parts.scroll.position.y = (parts.rider ? 35 : 30) + Math.sin(t * 3) * 0.6; // over the helmet's plume
+    const pulse = 0.5 + 0.5 * Math.sin(t * 3);
+    parts.aura.material.opacity = 0.35 + 0.25 * pulse;
+    parts.auraRing.material.opacity = 0.45 + 0.35 * pulse;
+    parts.auraRing.scale.setScalar(1 + 0.04 * pulse);
   }
 
   buildSoldier(look) {
@@ -2371,6 +2688,7 @@ export class World3D {
         });
       }
       this.hasHeldOnTop ||= isDangling;
+      if (parts.rider) this.poseMount(entry, ch, t, { isWalking, isDangling });
       if (ch.isKnight) this.poseKnight(entry, ch, t, isWalking);
       if (ch.isObserver) continue;
       const { agent } = ch;
@@ -2652,8 +2970,9 @@ export class World3D {
       // a grown base moves whole: its land, and the town center where its core stands on it
       const { w, h } = e.placing ? { w: this.L.PLOT_W, h: this.L.PLOT_H } : base.size;
       const coreX = e.placing ? 0 : base.coreX;
+      const { tc, h: coreH } = e.layoutOf(e.placing ? null : base);
       this.sizeGhost(drag, w, h);
-      drag.slab.position.set(coreX + drag.area.x + drag.area.w / 2, 1, h - this.L.PLOT_H + drag.area.y + drag.area.h / 2);
+      drag.slab.position.set(coreX + tc.x + tc.w / 2, 1, h - coreH + tc.y + 8 + (tc.h - 8) / 2);
       drag.group.position.set(pos.x, 0, pos.y);
     }
     // land being resized: red where it would not fit; an edge under the pointer lights the land up

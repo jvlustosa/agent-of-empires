@@ -21,20 +21,34 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     ele fica, vermelho onde não cabe (entre duas bases sempre sobra uma estrada). Perto de uma
     vizinha, ele se alinha com ela. Soltar sobre outra base troca as duas de lugar. Base movida fica
     fixa. Os aldeões vão a pé, pelas estradas, até o lugar novo.
-  - **Aumentar o terreno**: passe o ponteiro na borda tracejada da base (ela acende e o cursor vira
-    o de redimensionar) e arraste uma borda ou um canto, em qualquer vista. O terreno vai do tamanho
-    de uma base nova até três lotes para cada lado, se alinha às vizinhas e a lotes inteiros, e fica
-    vermelho onde não cabe. A base muda ao vivo enquanto você arrasta e fica fixa com o tamanho novo
-    (mover a base leva o terreno junto). O que nasce na terra extra é gerado, sempre igual para o
-    mesmo repositório e tamanho, e o que já estava de pé fica no lugar quando o terreno cresce:
+  - **Redimensionar o terreno**: passe o ponteiro na borda tracejada da base (ela acende e o cursor
+    vira o de redimensionar) e arraste uma borda ou um canto, em qualquer vista. O terreno vai de
+    **meio lote** (64 × 60) até três lotes para cada lado, se alinha às vizinhas, ao meio lote e a
+    lotes inteiros, e fica vermelho onde não cabe. A base muda ao vivo enquanto você arrasta e fica
+    fixa com o tamanho novo (mover a base leva o terreno junto). O que nasce na terra extra é gerado,
+    sempre igual para o mesmo repositório e tamanho, e o que já estava de pé fica no lugar quando o
+    terreno muda: a muralha cresce em degraus a partir do Centro da Cidade, e salões e torres se
+    alinham a partir dele, então crescer só acrescenta nas pontas.
     - O Centro da Cidade, a mina e a forja continuam juntos na borda de baixo, onde fica o portão.
+    - **Menor que um lote** (mais estreito ou mais raso que uma base nova), a base se rearruma num
+      núcleo de meio lote: Centro da Cidade menor, mina e forja pequenas nos cantos, construtores
+      trabalhando na frente do prédio, um banco no lugar do cercado de espera, sem bandeira, e a
+      placa com o nome acima do terreno. Os aldeões vão a pé para os lugares novos, e voltam aos de
+      sempre quando o terreno volta a ter um lote.
+    - O **Centro da Cidade cresce com o terreno**, no 2D, no ISO e no 3D: quanto mais terra (em
+      largura e em profundidade), mais alto ele fica, com telhado e torres mais altos e, perto do
+      tamanho máximo, um segundo andar de janelas. No 3D ele também fica mais fundo, avançando para
+      dentro da muralha sem chegar na torre de menagem nem no poço. A frente fica no pátio, e ele só
+      alarga até o limite que não invade a mina, a forja nem os aldeões que trabalham na parede.
+      Tudo cresce ao vivo enquanto você arrasta e volta ao tamanho normal quando o terreno volta.
     - A terra atrás deles vira uma **muralha** em volta do Centro da Cidade, com torres ao longo dos
       muros, torre de menagem com bandeira, salões encostados nos muros e um poço no pátio. Antes da
       era Fortaleza a muralha é uma paliçada de madeira, a não ser que você escolha **Muralha › Pedra**
       em Personalizar.
     - O resto vira **vila**: casas no estilo da base (cabanas no Descobrimento), celeiros, campos,
-      árvores e a rua do pátio seguindo até as bordas.
-    - Para voltar ao tamanho normal, arraste a borda de volta até ela encaixar no menor tamanho.
+      árvores, palheiros, pilhas de lenha, barracas de feira com toldo na cor do time, moinhos com as
+      pás girando e lagoas, e a rua do pátio seguindo até as bordas.
+    - Para voltar ao tamanho normal, arraste a borda de volta até ela encaixar em um lote.
   - **Mover a praça**: arraste o mercado (ou o calçamento ao lado do poço). Ela vai para a terra
     aberta, onde ocupa duas fileiras de altura, com uma estrada até a mais próxima e uma estrada de
     folga das bases, ou volta para o lado da estrada principal (solte-a além da estrada). O lugar
@@ -79,6 +93,7 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
       altura da era, as paredes ganham uma segunda fileira de janelas). Largura e profundidade param
       no tamanho do maior castelo (Imperial Colossal), então o prédio nunca invade a mina, a forja
       nem os aldeões que trabalham na parede; girado, a face virada para o pátio continua no pátio.
+      Num terreno maior, o crescimento do terreno soma por cima destes controles.
       "Voltar ao formato" põe os três em 100%. A prévia 3D acompanha enquanto você arrasta.
     - O diálogo mostra a prévia animada na cor do repositório antes de aplicar; na vista 3D, a prévia
       é o castelo em 3D, com tamanho, dimensões, muralha e giro.
@@ -100,12 +115,13 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   - **Incluir repositório**: "+ Adicionar repositório" nas Configurações (ou clique direito numa
     terra livre) abre a busca de repositórios; "Só fundar a base" fixa a base sem começar agente.
 - **O império**: tudo o que segue vem de dado real desta máquina, nunca de pontos inventados.
-  - **Recursos**, no canto do mapa como no AoE (últimos 7 dias, somando as bases do império):
-    **ouro** = commits, **madeira** = linhas adicionadas, **comida** = horas de agente (tempo entre
-    entradas do transcript com menos de 5 min de intervalo, por dia, no fuso da máquina), **pedra** =
-    arquivos no git, **tokens** (cristal azul) = tokens dos agentes (entrada, saída e escrita de
-    cache, cada resposta contada uma vez, subagentes incluídos; leitura de cache fica de fora,
-    porque é o mesmo contexto relido a cada turno), **população** = agentes trabalhando agora.
+  - **Recursos** (últimos 7 dias, somando as bases do império): **ouro** = commits, **tokens**
+    (cristal azul) = tokens dos agentes (entrada, saída e escrita de cache, cada resposta contada uma
+    vez, subagentes incluídos; leitura de cache fica de fora, porque é o mesmo contexto relido a cada
+    turno), **madeira** = linhas adicionadas, **comida** = horas de agente (tempo entre entradas do
+    transcript com menos de 5 min de intervalo, por dia, no fuso da máquina) e **pedra** = arquivos
+    no git. A barra no canto do mapa, como no AoE, foca em ouro e tokens, mais a **população**
+    (agentes trabalhando agora); os cinco recursos aparecem por base na Visão do império.
   - **Balão de tokens da sessão**: sobre o Centro da Cidade de cada base com gasto na sessão do
     plano (a janela de 5 h dos limites), um balão mostra os tokens que os agentes dela gastaram
     desde que a janela abriu e quanto da sessão isso é ("23% da sessão"). A barra é a sessão
@@ -116,9 +132,16 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     (claude.ai, app Desktop, sessões fora da pasta de repositórios) fica dividido entre elas. O balão dá um pulinho quando os tokens sobem;
     a dica do mapa (mouse no Centro da Cidade) explica o número. Sem limites (desligados ou
     nenhuma janela aberta), mostra só os tokens das últimas 5 h.
-  - **Visão do império** (clique nos recursos, no botão do castelo ou tecla `I`): cada base com
-    emblema, era e estilo, os quatro recursos e quando foi fundada (primeiro commit); "Ver no
-    mapa" acende a base, "Pôr no mapa" fixa uma base explorada que não está no mapa.
+  - **Visão do império** (clique nos recursos, no botão do castelo ou tecla `I`): no topo, ouro e
+    tokens da semana em destaque. Logo abaixo, **Tokens e custo** dos últimos 30 dias: quanto o uso
+    custaria pago por requisição na API do Claude (preço de lista de cada modelo, com entrada, saída,
+    escrita de cache de 5 min e de 1 h e leitura de cache), o preço de tabela da sua assinatura (Pro
+    US$ 20, Max 5x US$ 100, Max 20x US$ 200 por mês, lido das credenciais do Claude Code) e a
+    diferença, o que a assinatura subsidia, com uma barra "você paga / subsidiado" e o gráfico diário
+    de tokens e de custo. Conta só as sessões nos repositórios da pasta de repositórios, então o
+    custo real é no mínimo esse. Plano Team ou Enterprise (ou sem login) mostra só o custo em API.
+    Depois, cada base com emblema, era e estilo, os cinco recursos e quando foi fundada (primeiro
+    commit); "Ver no mapa" acende a base, "Pôr no mapa" fixa uma base explorada que não está no mapa.
   - **Névoa de guerra**: repositórios da pasta de repositórios (escolhida na primeira execução; `~/Code` por padrão) onde nenhum agente trabalhou ficam como ruínas
     na névoa, numa faixa abaixo da terra. Clicar nela abre a lista; "Explorar" escolhe a tarefa do
     primeiro agente, e a base sai da névoa quando ele chega.
@@ -133,9 +156,9 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   - **Conquistas** (10, na Visão do império): Fundador, Cidade-estado, Império, Era Imperial,
     Exército (5 agentes trabalhando juntos), Mina de ouro (100 commits na semana), Celeiro cheio
     (50 h de agente na semana), Explorador, Arquiteto e Maravilha.
-  - **História** (na Visão do império): gráfico dos últimos 30 dias, uma linha por recurso (commits
-    e tokens por dia, cada uma com o seu pico), e os acontecimentos com data: bases fundadas, eras,
-    maravilhas e conquistas. Passe o mouse num dia para ver os números dele; fora do
+  - **História** (na Visão do império): commits por dia nos últimos 30 dias (os tokens têm o gráfico
+    deles, com o custo, no topo), e os acontecimentos com data: bases fundadas, eras, maravilhas e
+    conquistas. Passe o mouse num dia para ver os números dele; fora do
     gráfico, a linha de baixo soma os 30 dias.
   - **Cor do time e apelido**: em "Personalizar base", escolha uma das 8 cores (ou a automática) e um
     apelido, que aparece no mapa, no card e na Visão do império.
@@ -149,6 +172,10 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   sessão). Ele anda até a frente de trabalho da atividade atual e trabalha lá:
   - **Lendo**: minera ouro na mina. **Terminal**: martela na forja. **Editando**: martela a parede
     do Centro da Cidade (ele cresce com o trabalho).
+  - **No git** (um comando `git` ou `gh` rodando): também na forja, mas com balão de forquilha
+    laranja no lugar do de terminal, e laranja no card e na linha do tempo.
+  - **Fora da main**: se a sessão está em outra branch que não `main`/`master`, o nome dela aparece
+    em laranja, com ícone de branch, no card e no rótulo do aldeão (ao passar o mouse ou selecionar).
   - **Na web**: olha o horizonte com a luneta, na frente do pátio.
   - **Pensando, respondendo, planejando, delegando**: no Centro da Cidade, com balão do que faz
     (pergaminho na mão quando escreve ou planeja).
@@ -337,6 +364,13 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     caixa, clique direito e o minimapa funcionam igual. Sem WebGL, o app avisa e fica na vista atual.
   - É sempre o mesmo mundo: estradas, caminhos e posições vêm da simulação do mapa; as vistas só
     desenham.
+- **Borda do mapa** (Configurações › Exibição): **Muralha** (padrão: muro de pedra alto e grosso,
+  com ameias e rodapé, torres de telhado vermelho nos cantos e a cada trecho dos muros, e um portão
+  entre duas torres onde a estrada principal sai do mapa; no 3D essas torres são mais altas, com uma
+  passarela com ameias por cima e a grade levadiça erguida) ou **Floresta** (uma fileira de árvores em volta,
+  e no 3D a mata continua do lado de fora). Com a muralha, o lado de fora fica em campo aberto, sem
+  árvores. Vale nas três vistas; a escolha fica salva com o mapa. Mapas salvos antes, quando a
+  floresta era o padrão, passam a abrir com a muralha.
 - **Só o mapa** (tecla `F` ou ⛶ nos controles): esconde a coluna de comando e o painel, e o mapa
   ocupa a janela inteira. Os recursos, o aldeão ocioso e os controles continuam por cima do mapa.
 - **Recolher o painel** (» no topo do painel ou Ctrl+B): o painel vira uma faixa fina com "Agentes";
@@ -398,6 +432,8 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     - Cada estilo toca as faixas em sequência e em loop, começando por uma diferente a cada vez. O
       nome da faixa aparece embaixo do volume; **Próxima ⏭** (ou a tecla **M** no mapa) pula para a
       seguinte, que leva cerca de um segundo para começar na primeira vez.
+    - A nota ♪ no canto superior direito do mapa liga e desliga a trilha com um clique, sem abrir as
+      Configurações; desligada, ela fica apagada e riscada de vermelho.
     - Tudo é escrito como notas em `src-tauri/src/music.rs` e sintetizado ali, sem arquivo de áudio
       no app. A música pausa quando a janela vai para a bandeja, volta quando ela abre, e para junto
       com o app.
@@ -466,6 +502,81 @@ pelo painel. Um pedido novo reabre a janela se ela estiver escondida na bandeja.
 Sessões abertas antes da instalação do hook continuam sem ele até serem reiniciadas (o Claude Code
 lê os hooks ao iniciar a sessão). Para desligar, desmarque em Configurações › "Rever a introdução", ou remova a entrada
 `--permission-hook` do `settings.json`.
+
+## O Batedor
+
+O herói da aldeia: um cavaleiro com o logo do Slack no escudo e uma aura dourada, que lê as fontes
+com que você o equipa e traz **missões** para as bases. Ele não é uma sessão: está sempre no mapa.
+
+- **Onde ele está**: na barra de baixo, o botão com o escudo (tecla **K**). Clique leva a câmera até
+  ele e mostra as sugestões dele na barra lateral; duplo clique, ou clicar no cavaleiro no mapa, abre
+  o painel. O número no botão são as missões abertas, em vermelho quando alguma é urgente.
+- **Sugestões na barra lateral**: as missões abertas aparecem numa seção "Batedor", acima dos
+  agentes, das urgentes para as baixas, com **Treinar em <base>** (abre o Novo agente com a tarefa
+  preenchida) e **Descartar**. **Ir até ele** leva a câmera até o cavaleiro. Clicar em **Sugestões (N)**
+  recolhe ou mostra a lista (▾/▸), e o app lembra a escolha.
+- **Equipar** (aba Equipamento, a janela de equipamento do Ragnarok): o cavaleiro no meio (com o
+  mapa em 3D, ele aparece em 3D, a cavalo, girando devagar) e os espaços em volta. Clique num espaço para editá-lo embaixo da janela; Salvar equipamento guarda
+  tudo.
+  - **Escudo, Lança, Capa e Botas** levam os conectores da sua conta do Claude (claude.ai ›
+    Configurações › Conectores), só para ler: nunca envia, escreve nem apaga nada. Qualquer conector
+    vai em qualquer um deles: clique no espaço e escolha. **Slack**: canais
+    (`#ac-tickets, #dev-bug-report`); **Gmail**: uma busca (`label:clientes is:unread`); **Notion**:
+    páginas ou bancos; **Google Drive**: pastas ou documentos.
+  - **Elmo, Viseira e Penacho** são as **skills** de `~/.claude/skills`, que guiam como ele julga e
+    escreve as missões. A Viseira abre no nível 3 e o Penacho no 5.
+  - **Anel e Amuleto** são as **rotinas**, na aba **Rotinas**: uma linha cada, com a próxima ronda
+    ("amanhã 09:00"), o horário e as fontes que lê. **Editar** abre Nome, Quando, Lê (quais fontes
+    ligadas ela lê) e Procura (o prompt daquela rotina); **Rodar agora** faz a ronda fora do horário.
+  - **Armadura**: não se equipa, muda com o nível (couro, ferro, aço, ouro).
+  - **Status**: os atributos do Ragnarok contando o que ele fez: FOR (missões levadas), AGI (rondas
+    na semana), VIT (rondas com relatório), INT (skills), DES (das missões que você decidiu, quantas
+    levou) e SOR (missões urgentes achadas).
+  - **Bolsa**: todos os conectores vinculados ao seu Claude e as suas skills. Os conectores que ele
+    ainda não sabe usar só para leitura aparecem apagados.
+- **Habilidades** (aba): o que ele sabe fazer, as regras de toda ronda e o texto exato que ele
+  recebe na próxima ronda.
+- **Na barra lateral** ele é o personagem principal: retrato, nível, XP, o que está fazendo e quando
+  sai de novo, o que carrega e as sugestões de missão para treinar um aldeão.
+- **Uma ronda**: Enviar batedor (ou uma rotina). O cavaleiro sai pela estrada principal e some na
+  névoa enquanto lê; em alguns minutos volta, com um aviso de quantas missões trouxe. Ele lê só o
+  que chegou desde a última ronda (a primeira olha 7 dias), junta relatos repetidos numa missão só e
+  descarta o que não vira código.
+- **Missões** (aba Missões): gravidade, tipo, bases, a evidência numa frase, os links de origem e a
+  tarefa pronta. **Treinar aldeão em <base>** abre o Novo agente com a tarefa preenchida: leia,
+  ajuste e mande. A missão nunca começa sozinha, porque o que ele lê pode trazer instruções
+  escondidas. Descartar tira da lista; as levadas e as descartadas ficam num grupo à parte.
+- **No mapa**: com missões abertas, ele cavalga até cada base que as recebeu, as urgentes primeiro,
+  e para ao lado do Centro da Cidade; sobre a base aparece um pergaminho ("2 missões") que abre só as
+  missões dela.
+- **Experiência** (aba Diário): rondas, missões achadas e, acima de tudo, missões que um aldeão levou
+  rendem XP. Ele sobe de Escudeiro a Lenda da aldeia, e a armadura muda: couro, ferro, aço, ouro. As
+  missões que você levou ou descartou entram nas próximas rondas: é assim que ele aprende o que vale
+  trazer.
+- **Privacidade**: a missão guarda um resumo técnico e os links, nunca as mensagens nem nome, e-mail
+  ou telefone de ninguém, e some depois de 30 dias sem novidade. O que ele leu não fica em transcript.
+  Uma ronda custa tokens do seu plano (o painel mostra uma estimativa); as rotinas esperam enquanto um
+  limite passa de 80%.
+
+## Celular
+
+O botão com ícone de celular no topo da lista de agentes abre o painel **Celular**. Ligado, o
+botão fica verde, com um ponto.
+
+- **Parear**: ligue "Comandar pelo celular", deixe o celular na mesma rede Wi-Fi do computador (ou
+  no Tailscale, nos dois) e aponte a câmera para o QR code. A página abre já conectada; dá para pôr
+  na tela inicial. Com Wi-Fi e Tailscale ligados, escolha a rede que o QR mostra.
+- **No celular**: no topo, quem precisa de você (Aprovar / Negar, ou as opções de uma pergunta);
+  embaixo, os agentes, primeiro os travados, depois os que esperam sua vez. **Responder** aparece nos
+  agentes que rodam aqui no app quando é a vez deles; os do Cursor ou do terminal pedem resposta lá.
+  **+ Novo agente** escolhe um projeto da lista e põe um agente para trabalhar aqui no app. O celular
+  vibra quando chega pedido novo.
+- **Segurança**: só aparelhos da sua rede ou do Tailscale, e só com o código do QR. Quem tiver o
+  link comanda os agentes, então não compartilhe. **Trocar o código** desconecta o celular pareado;
+  desligar fecha a porta na hora. A conexão na rede local não é criptografada: em Wi-Fi público, use
+  só pelo Tailscale.
+- **Não abriu?** Confira se estão na mesma rede e se o firewall do computador libera a porta que o
+  painel mostra (47380/TCP por padrão).
 
 ## Instalar e rodar
 

@@ -77,6 +77,9 @@ pub struct Agent {
     /// Latest push or merge that went through, its subagents' included.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git: Option<GitEvent>,
+    /// Branch checked out where the session works, from its transcript.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -288,7 +291,7 @@ impl Collector {
 fn activity_from_state(state: &TranscriptState, pending: Option<&PendingTool>) -> Activity {
     if let Some(tool) = pending {
         return Activity {
-            kind: crate::transcript::tool_kind(&tool.name),
+            kind: crate::transcript::step_kind(&tool.name, &tool.input),
             label: describe_tool(&tool.name, &tool.input),
             tool: Some(tool.name.clone()),
             since: tool.at,
@@ -355,6 +358,7 @@ fn to_agent(session: &SessionFile, state: Option<&TranscriptState>, now: i64) ->
         activity,
         subagents: Vec::new(),
         git: state.and_then(|s| s.git.clone()),
+        branch: state.and_then(|s| s.branch.clone()),
     }
 }
 

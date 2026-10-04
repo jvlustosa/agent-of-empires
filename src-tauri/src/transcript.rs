@@ -83,6 +83,8 @@ pub struct TranscriptState {
     pub last_event_at: Option<i64>,
     pub pending: HashMap<String, PendingTool>,
     pub git: Option<GitEvent>,
+    /// The branch checked out in the session's folder, as Claude Code stamps on each entry.
+    pub branch: Option<String>,
     pub mtime_ms: i64,
 }
 
@@ -97,6 +99,9 @@ impl TranscriptState {
     pub fn apply_entry(&mut self, entry: &Value) {
         if let Some(at) = entry.get("timestamp").and_then(Value::as_str).and_then(parse_timestamp_ms) {
             self.last_event_at = Some(at);
+        }
+        if let Some(branch) = non_empty_str(entry.get("gitBranch")) {
+            self.branch = Some(branch);
         }
         let at = self.last_event_at;
         match entry.get("type").and_then(Value::as_str) {
@@ -156,7 +161,7 @@ impl TranscriptState {
     }
 
     fn record_step(&mut self, name: &str, input: &Value, at: Option<i64>) {
-        self.steps.push(Step { kind: tool_kind(name), at });
+        self.steps.push(Step { kind: step_kind(name, input), at });
         if self.steps.len() > STEPS_MAX {
             self.steps.remove(0);
         }
@@ -361,6 +366,21 @@ pub fn tool_kind(name: &str) -> &'static str {
     }
 }
 
+/// tool_kind, with the shell's git and gh calls set apart: the map shows them as git work.
+pub fn step_kind(name: &str, input: &Value) -> &'static str {
+    let command = input.get("command").and_then(Value::as_str);
+    if name == "Bash" && command.is_some_and(runs_git) {
+        "git"
+    } else {
+        tool_kind(name)
+    }
+}
+
+// Any command in the line runs git or gh; as with git_action, quoted mentions don't count.
+fn runs_git(command: &str) -> bool {
+    shell_commands(command).iter().any(|words| matches!(program_of(&command_words(words)), Some("git" | "gh")))
+}
+
 /// "push" for `git push`, "merge" for `git merge` or `gh pr merge`, None otherwise. In a chain
 /// (`git merge x && git push`) the last one wins; quoted text, like a commit message, never counts.
 pub fn git_action(command: &str) -> Option<&'static str> {
@@ -368,10 +388,11 @@ pub fn git_action(command: &str) -> Option<&'static str> {
 }
 
 fn git_action_of(words: &[String]) -> Option<&'static str> {
-    let words: Vec<&str> = words.iter().map(String::as_str).skip_while(|w| w.contains('=') && !w.starts_with('-')).collect();
-    let (program, args) = words.split_first()?;
+    let words = command_words(words);
+    let program = program_of(&words)?;
+    let args = &words[1..];
     let has = |flags: &[&str]| args.iter().any(|arg| flags.contains(arg));
-    match program.rsplit('/').next()? {
+    match program {
         "gh" => (args.len() >= 2 && args[..2] == ["pr", "merge"]).then_some("merge"),
         "git" => match git_subcommand(args)? {
             "push" if !has(&["--dry-run", "-n"]) => Some("push"),
@@ -380,6 +401,16 @@ fn git_action_of(words: &[String]) -> Option<&'static str> {
         },
         _ => None,
     }
+}
+
+// The words past leading `VAR=value` assignments.
+fn command_words(words: &[String]) -> Vec<&str> {
+    words.iter().map(String::as_str).skip_while(|w| w.contains('=') && !w.starts_with('-')).collect()
+}
+
+// The program's name without its path (`/usr/bin/git` is git).
+fn program_of<'a>(words: &[&'a str]) -> Option<&'a str> {
+    words.first()?.rsplit('/').next()
 }
 
 // The subcommand past git's own options (`git -C repo -c k=v push`).
@@ -613,6 +644,27 @@ mod tests {
         assert_eq!(git_action("git merge-base main HEAD"), None);
         assert_eq!(git_action(r#"git commit -m "fix; git push later" && echo \"git merge\""#), None);
         assert_eq!(git_action("echo git push"), None);
+    }
+
+    #[test]
+    fn git_and_gh_calls_are_git_work_but_their_mentions_are_not() {
+        let bash = |command: &str| step_kind("Bash", &json!({ "command": command }));
+        assert_eq!(bash("git status"), "git");
+        assert_eq!(bash("cd /r && git -C sub log --oneline | head"), "git");
+        assert_eq!(bash("GIT_PAGER=cat /usr/bin/git diff"), "git");
+        assert_eq!(bash("gh pr create --fill"), "git");
+        assert_eq!(bash("cargo test"), "terminal");
+        assert_eq!(bash(r#"echo "git push" && grep -r git src"#), "terminal");
+        assert_eq!(step_kind("Read", &json!({"file_path": "/r/.gitignore"})), "reading");
+    }
+
+    #[test]
+    fn branch_follows_the_latest_entry_that_names_one() {
+        let mut state = TranscriptState::default();
+        state.apply_entry(&json!({"type": "user", "gitBranch": "main", "message": {"content": "oi"}}));
+        state.apply_entry(&json!({"type": "assistant", "gitBranch": "feature-x", "message": {"content": []}}));
+        state.apply_entry(&json!({"type": "assistant", "gitBranch": "", "message": {"content": []}}));
+        assert_eq!(state.branch.as_deref(), Some("feature-x"), "outside a repo the last branch stays");
     }
 
     #[test]

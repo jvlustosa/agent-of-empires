@@ -9,6 +9,7 @@ mod hosted;
 mod music;
 mod notify;
 mod onboarding;
+mod phone;
 mod projects;
 mod scout;
 mod sound;
@@ -594,11 +595,12 @@ fn main() {
             play_sound, set_music, set_music_volume, set_music_station, skip_music_track, get_music_track, get_snapshot, refresh_snapshot, open_session, get_approvals, resolve_approval, set_auto_approve, get_auto_approve, list_projects, project_preview, get_empire, deploy_agent, end_session, get_usage, refresh_usage,
             get_hosted, send_to_agent, move_to_cursor, list_sessions, resume_session,
             onboarding::get_config, onboarding::get_setup, onboarding::set_projects_root, onboarding::finish_setup, onboarding::set_usage_on,
-            scout::get_scout, scout::list_scout_skills, scout::set_scout_equipment, scout::set_scout_village, scout::start_scout, scout::set_mission_status,
-            scout::open_mission_source])
+            scout::get_scout, scout::list_scout_skills, scout::list_scout_connectors, scout::run_routine, scout::scout_prompt, scout::set_scout_equipment, scout::set_scout_village, scout::start_scout, scout::set_mission_status,
+            scout::open_mission_source, phone::get_phone, phone::set_phone, phone::reset_phone_token])
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             scout::init(&config_dir);
+            phone::init(&config_dir);
             onboarding::init(config_dir);
             let handle = app.handle().clone();
             // Debug builds live in target/debug: registering them at login would go stale.
@@ -620,6 +622,8 @@ fn main() {
             );
             app.manage(approvals);
             app.manage(hosted_agents);
+            // After the agents it reads from; serves again at once if it was on when the app closed.
+            app.manage(phone::Phone::new(handle.clone()));
             let emitter = handle.clone();
             app.state::<music::Music>().on_track(Box::new(move |title| {
                 if let Err(err) = emitter.emit(MUSIC_TRACK_EVENT, title) {

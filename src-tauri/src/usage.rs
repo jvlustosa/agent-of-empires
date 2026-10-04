@@ -95,10 +95,39 @@ pub fn parse_limits(response: &Value) -> Vec<Limit> {
         .collect()
 }
 
-fn access_token() -> Option<String> {
+/// The Claude subscription and its monthly list price in US$ (claude.com/pricing).
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Plan {
+    pub name: String,
+    pub monthly_usd: f64,
+}
+
+fn oauth_credentials() -> Option<Value> {
     let path = home()?.join(".claude").join(".credentials.json");
-    let credentials: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
-    let oauth = credentials.get("claudeAiOauth")?;
+    let mut credentials: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    credentials.get_mut("claudeAiOauth").map(Value::take)
+}
+
+/// Read from the plan fields of Claude Code's credentials, never its token. None for Team and
+/// Enterprise seats, priced per contract.
+pub fn plan() -> Option<Plan> {
+    plan_from(&oauth_credentials()?)
+}
+
+fn plan_from(oauth: &Value) -> Option<Plan> {
+    let tier = oauth.get("rateLimitTier").and_then(Value::as_str).unwrap_or_default();
+    let (name, monthly_usd) = match oauth.get("subscriptionType").and_then(Value::as_str)? {
+        "pro" => ("Pro", 20.0),
+        "max" if tier.contains("20x") => ("Max 20x", 200.0),
+        "max" => ("Max 5x", 100.0),
+        _ => return None,
+    };
+    Some(Plan { name: name.into(), monthly_usd })
+}
+
+fn access_token() -> Option<String> {
+    let oauth = oauth_credentials()?;
     let expires_at = oauth.get("expiresAt").and_then(Value::as_i64).unwrap_or(i64::MAX);
     if expires_at <= now_ms() {
         return None; // Claude Code refreshes it next time it runs; we never write credentials
@@ -205,6 +234,15 @@ pub fn until_next_reset(usage: &Usage) -> Option<Duration> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn plan_comes_from_the_subscription_and_its_tier() {
+        let plan = |kind: &str, tier: &str| plan_from(&json!({"subscriptionType": kind, "rateLimitTier": tier})).map(|p| (p.name, p.monthly_usd));
+        assert_eq!(plan("max", "default_claude_max_5x"), Some(("Max 5x".into(), 100.0)));
+        assert_eq!(plan("max", "default_claude_max_20x"), Some(("Max 20x".into(), 200.0)));
+        assert_eq!(plan("pro", "default_claude_ai"), Some(("Pro".into(), 20.0)));
+        assert_eq!(plan("enterprise", ""), None);
+    }
 
     #[test]
     fn limits_keep_session_and_week_and_skip_unused_model_weeks() {

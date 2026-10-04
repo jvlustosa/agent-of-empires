@@ -1,6 +1,6 @@
-import { formatElapsed, isObserver, kindInfo } from './kinds.js';
+import { featureBranch, formatElapsed, isObserver, kindInfo } from './kinds.js';
 import { formatResource, resourceIcon } from './overview.js';
-import { CORE_H, CORE_W, planPlot } from './plot.js';
+import { CORE_H, CORE_W, SMALL_CORE_H, SMALL_CORE_W, isSmallLand, planPlot, towersAlong } from './plot.js';
 import * as S from './sprites.js';
 import { makeProjection, project, projectStep, unproject } from './view.js';
 
@@ -10,13 +10,16 @@ import { makeProjection, project, projectStep, unproject } from './view.js';
 // square, where agents idle for a long time hang out.
 const BORDER = 12; // forest around the map
 // A new base is compact: town center, gold mine and forge around one yard. Dragging the edges of its
-// land grows it up to three lots each way, and plot.js fills the new land.
+// land grows it up to three lots each way, or shrinks it down to the half-lot core, and plot.js fills
+// the land.
 const PLOT_W = CORE_W;
 const PLOT_H = CORE_H;
 const PLOT_SIZE = { w: PLOT_W, h: PLOT_H };
 const ROAD = 10; // also the least gap between two bases, so a road always fits between them
 const MAX_PLOT_W = 3 * PLOT_W + 2 * ROAD;
 const MAX_PLOT_H = 3 * PLOT_H + 2 * ROAD;
+const MIN_PLOT_W = SMALL_CORE_W;
+const MIN_PLOT_H = SMALL_CORE_H;
 // The pointer this close to a base's edge (screen px) grabs it to resize the land.
 const EDGE_GRAB_PX = 6;
 // The land is eight bases wide and grows downward, always keeping two whole free rows below the
@@ -79,12 +82,12 @@ const YARD_Y = 60;
 const GATE_X = 64;
 const NAMEPLATE_INSET = 3; // the nameplate hangs this far inside the plot's top on screen
 export const NICKNAME_MAX = 24;
-// What each activity looks like on the map: reading mines gold, the terminal works the forge,
+// What each activity looks like on the map: reading mines gold, the terminal (git too) works the forge,
 // editing hammers at the town center's wall, the web is watched with a spyglass from the yard.
 // Everything else happens in front of the town center. Whoever waits for the user (their turn, or
 // blocked on them) leaves the workers there for the waiting pen under the bell: paved, fenced off
 // from the town center's crowd and open to the yard, so they walk in and out without crossing it.
-const NODE_FOR_KIND = { reading: 'mine', terminal: 'forge', coding: 'build', web: 'tower' };
+const NODE_FOR_KIND = { reading: 'mine', terminal: 'forge', git: 'forge', coding: 'build', web: 'tower' };
 const NODES = {
   mine: { dir: 'n', tool: 'pickaxe', impact: 'gold', spots: [[10, 41], [22, 41], [16, 47], [28, 47], [6, 47]] },
   forge: { dir: 'n', tool: 'hammer', impact: 'sparks', spots: [[118, 44], [107, 44], [112, 50], [122, 50], [101, 50]] },
@@ -238,7 +241,7 @@ function isInsideSpot(rect, x, y) {
 // The core (town center, mine, forge and yard: every base-local spot above) stands on the land's
 // bottom edge, by the gate, coreX from its left edge.
 function coreOrigin(rect, coreX = 0) {
-  return { x: rect.x + coreX, y: rect.y + rect.h - PLOT_H };
+  return { x: rect.x + coreX, y: rect.y + rect.h - coreLayout(rect.w, rect.h).h };
 }
 
 // The target nearest to value when it is within SNAP_PX, else value itself.
@@ -249,13 +252,13 @@ function snapTo(value, targets) {
 
 // Where a base's villagers come out to the roads: below its gate.
 function gateExit(rect, coreX = 0) {
-  return { x: rect.x + coreX + GATE_X, y: rect.y + rect.h + ROAD / 2 };
+  return { x: rect.x + coreX + coreLayout(rect.w, rect.h).gateX, y: rect.y + rect.h + ROAD / 2 };
 }
 
 // A saved land size, if it is one: { w, h, coreX } within the limits.
 function savedPlot(value) {
   const { w, h, coreX } = value ?? {};
-  const isValid = [w, h, coreX].every(Number.isInteger) && w >= PLOT_W && w <= MAX_PLOT_W && h >= PLOT_H && h <= MAX_PLOT_H && coreX >= 0 && coreX <= w - PLOT_W;
+  const isValid = [w, h, coreX].every(Number.isInteger) && w >= MIN_PLOT_W && w <= MAX_PLOT_W && h >= MIN_PLOT_H && h <= MAX_PLOT_H && coreX >= 0 && coreX <= w - coreLayout(w, h).w;
   return isValid ? { w, h, coreX } : null;
 }
 
@@ -285,6 +288,71 @@ function wallBlocks(points) {
   return blocks;
 }
 const WAIT_FENCE_BLOCKS = wallBlocks(WAIT_FENCE);
+
+// A base's core as laid out above, and the half-lot one a land smaller than a lot gets (plot.js): a
+// smaller town center in the same 40 x 36 box with a little mine and forge at its sides, builders at
+// its front, a bench for whoever waits on you instead of the pen, no banner and the wonders in its
+// back corners. nodes give each work site's spots and facing (NODES its tool); mine and forge are
+// where their sprites draw from and their foot. Core-local.
+const FULL_CORE = {
+  isSmall: false,
+  w: CORE_W,
+  h: CORE_H,
+  tc: TOWN_CENTER,
+  door: DOOR,
+  banner: BANNER,
+  bell: BELL,
+  yardY: YARD_Y,
+  gateX: GATE_X,
+  nodes: NODES,
+  ground: BASE_GROUND,
+  fence: WAIT_FENCE,
+  fenceBlocks: WAIT_FENCE_BLOCKS,
+  bench: null,
+  mine: { x: 4, y: 10, foot: [18, 30] },
+  forge: { x: 96, y: 8, foot: [110, 32] },
+  obelisk: [16, 76],
+  beacon: [120, 78],
+};
+const SMALL_CORE = {
+  isSmall: true,
+  w: SMALL_CORE_W,
+  h: SMALL_CORE_H,
+  tc: { x: 12, y: 0, w: 40, h: 36 },
+  door: { x: 32, y: 37 },
+  banner: null,
+  bell: { x: 10, y: 50 },
+  yardY: 44,
+  gateX: 32,
+  nodes: {
+    mine: { dir: 'n', spots: [[5, 40], [11, 40], [8, 45], [3, 45], [13, 45]] },
+    forge: { dir: 'n', spots: [[53, 40], [59, 40], [56, 45], [51, 45], [61, 45]] },
+    build: { dir: 'n', spots: [[22, 41], [42, 41], [26, 44], [38, 44], [18, 44]] },
+    tower: { dir: 'e', spots: [[50, 52], [56, 55], [48, 57], [58, 50], [54, 58]] },
+    tc: { dir: 's', spots: [[28, 49], [36, 49], [32, 53], [24, 53], [40, 53], [28, 57], [36, 57], [20, 57], [44, 57]] },
+    wait: { dir: 's', spots: [[5, 55], [11, 55], [17, 55], [8, 58], [14, 58], [2, 58], [20, 58]] },
+  },
+  ground: { yardY: 44, gate: { x: 32 }, pen: { x: 1, y: 49, w: 21, h: 10 }, patches: [[1, 36, 14, 8], [49, 36, 14, 8], [18, 38, 28, 6], [22, 47, 22, 12]] },
+  fence: [],
+  fenceBlocks: [],
+  bench: { x: 3, y: 51, w: 16 },
+  mine: { x: 1, y: 21, foot: [8, 34] },
+  forge: { x: 49, y: 19, foot: [56, 34] },
+  obelisk: [5, 14],
+  beacon: [59, 14],
+};
+
+function coreLayout(w, h) {
+  return isSmallLand(w, h) ? SMALL_CORE : FULL_CORE;
+}
+
+// The map's edge as a stone wall (the default) or the forest (Configurações › Borda do mapa): Prontera's
+// stone, terracotta roofs on the towers, close enough that every run reads as guarded.
+const BORDER_WALL_INSET = 6;
+const BORDER_TOWER_STEP = 70;
+const BORDER_GATE_HALF = ROAD + 6; // the gate towers stand clear of the road, the 3D ones are stout
+const BORDER_WALL_DESIGN = { era: 3, style: 'prontera' };
+const BORDER_WALL_ROOF = ['#9a4a34', '#743626'];
 
 function suggestEra(files) {
   if (!Number.isFinite(files)) return S.DEFAULT_TOWN.era;
@@ -541,9 +609,9 @@ function randomBetween([min, max]) {
 export class Empire {
   /**
    * layout: { pinned: { project: { x, y } }, hidden: [project], paths: { project: path },
-   * orders: { sessionId: { project, at } }, designs: { project: { era, style } }, square: { x, y } },
-   * saved by the caller through onLayoutChange. Pinned repositories keep their base (and its place)
-   * even with no agents; hidden ones stay off the map, villagers included; orders are agents the
+   * orders: { sessionId: { project, at } }, designs: { project: { era, style } }, square: { x, y },
+   * mapEdge: 'wall' | 'forest' }, saved by the caller through onLayoutChange. Pinned repositories keep their base
+   * (and its place) even with no agents; hidden ones stay off the map, villagers included; orders are agents the
    * user sent to work in another repository; designs are how a base's town center looks, when the
    * user changed it; square is where the user put the square (top-left); plots are the bases whose
    * land the user grew: { project: { w, h, coreX } }.
@@ -579,6 +647,10 @@ export class Empire {
     this.viewRotation = Number.isInteger(callbacks.view?.rotation) ? callbacks.view.rotation : 0;
     this.proj = makeProjection('top', 0, WORLD_W, 0);
     this.props = [];
+    // The map's edge: a stone wall unless the user chose the forest. Maps saved while the forest was
+    // the default (hasBorderWall: false) get the wall too.
+    this.hasBorderWall = layout?.mapEdge !== 'forest';
+    this.borderWall = null; // { path, towers, roof } of that wall while it stands, for 3D
     this.panKeys = new Set(); // arrow keys / WASD held down
     this.isPanKeyDown = false; // Space held: left drag pans instead of selecting
     this.pinned = new Map(); // project -> { x, y }: top-left of its base
@@ -916,7 +988,9 @@ export class Empire {
     this.drawWildLand(ctx);
     this.drawFogGround(ctx);
     this.drawSquareScenery(ctx);
-    this.drawForestEdge(ctx, width, height);
+    this.borderWall = null;
+    if (this.hasBorderWall) this.drawBorderWall(ctx, width, height);
+    else this.drawForestEdge(ctx, width, height);
     this.world3d?.markStatic();
   }
 
@@ -946,14 +1020,17 @@ export class Empire {
   }
 
   // Upright scenery (foot at x, y): painted into the ground from above, a standing sprite in isometric.
-  addProp(ctx, kind, x, y, size = 0) {
-    const prop = { kind, x, y, size };
+  addProp(ctx, kind, x, y, size = 0, extra = null) {
+    const prop = { kind, x, y, size, ...extra };
     this.props.push(prop); // isometric and 3D stand them up
     if (this.viewMode === 'top') this.drawProp(ctx, prop);
   }
 
-  drawProp(ctx, { kind, x, y, size }) {
+  drawProp(ctx, prop) {
+    const { kind, x, y, size } = prop;
     if (kind === 'tree') S.drawTree(ctx, x, y, size);
+    else if (kind === 'wall') S.drawWallBlock(ctx, x, y, prop, BORDER_WALL_ROOF, BORDER_WALL_DESIGN);
+    else if (kind === 'tower') S.drawWallTower(ctx, x, y, BORDER_WALL_ROOF, BORDER_WALL_DESIGN);
     else if (kind === 'bush') S.drawBush(ctx, x, y);
     else if (kind === 'rock') S.drawRock(ctx, x, y, 4 + size);
     else if (kind === 'barrel') S.drawBarrel(ctx, x - 3, y - 8);
@@ -1235,6 +1312,25 @@ export class Empire {
     }
   }
 
+  // The map's edge as a stone wall: one run round the land, from one side of the gate where the main
+  // road leaves the map to the other, towers on the corners, along the runs and either side of the
+  // gate. Blocks and towers go back to front, so the view from above paints them in order.
+  drawBorderWall(ctx, width, height) {
+    const [x0, y0, x1, y1] = [BORDER_WALL_INSET, BORDER_WALL_INSET + 3, width - BORDER_WALL_INSET, height - 3];
+    const path = [[MAIN_X + BORDER_GATE_HALF, y1], [x1, y1], [x1, y0], [x0, y0], [x0, y1], [MAIN_X - BORDER_GATE_HALF, y1]];
+    this.borderWall = { path, towers: towersAlong(path, BORDER_TOWER_STEP), roof: BORDER_WALL_ROOF };
+    const pieces = [...wallBlocks(path).map((block) => ({ kind: 'wall', ...block })), ...this.borderWall.towers.map(([x, y]) => ({ kind: 'tower', x, y }))];
+    pieces.sort((a, b) => a.y - b.y || (a.kind === 'tower') - (b.kind === 'tower'));
+    for (const { kind, x, y, ...block } of pieces) this.addProp(ctx, kind, x, y, 0, block);
+  }
+
+  /** The map's edge: the forest, or a stone wall round the land (Configurações › Borda do mapa). */
+  setBorderWall(isOn) {
+    this.hasBorderWall = isOn;
+    this.refreshLayout();
+    this.saveLayout();
+  }
+
   // Rebuilds the roads and the cached ground when a base (or the square) is founded, moved or
   // abandoned, and grows the land so there is always room to found one more base.
   refreshLayout() {
@@ -1242,7 +1338,8 @@ export class Empire {
     const lowest = Math.max(MAP_Y0, this.square.y + SQUARE_H, ...spots.map(({ rect }) => rect.y + rect.h));
     this.landBottom = Math.max(MAP_Y0 + MIN_LAND_ROWS * (PLOT_H + ROAD), lowest + ROAD + FREE_ROWS * (PLOT_H + ROAD));
     const places = spots.map(({ project, rect, coreX }) => `${project}@${rect.x},${rect.y},${rect.w}x${rect.h}+${coreX}`).sort();
-    const key = `${this.landBottom}|${this.fogNames.join(',')}|square@${this.square.x},${this.square.y}|${places.join('|')}`;
+    const edge = this.hasBorderWall ? 'wall' : 'forest';
+    const key = `${this.landBottom}|${this.fogNames.join(',')}|square@${this.square.x},${this.square.y}|${edge}|${places.join('|')}`;
     if (key === this.layoutKey) return;
     this.layoutKey = key;
     if (!this.nav || this.sizedWorldH !== this.worldH) this.resize();
@@ -1310,8 +1407,9 @@ export class Empire {
       return ch;
     }
     const { x, y } = this.coreOf(base);
-    Object.assign(ch, { x: x + DOOR.x, y: y + DOOR.y, hiddenUntil: base.foundedAt + FOUNDING_MS });
-    this.walk(ch, { type: 'enter' }, [{ x: x + DOOR.x, y: y + DOOR.y + 5 }], now);
+    const { door } = this.layoutOf(base);
+    Object.assign(ch, { x: x + door.x, y: y + door.y, hiddenUntil: base.foundedAt + FOUNDING_MS });
+    this.walk(ch, { type: 'enter' }, [{ x: x + door.x, y: y + door.y + 5 }], now);
     return ch;
   }
 
@@ -1329,7 +1427,8 @@ export class Empire {
       }
     }
     const node = nodeFor(ch.agent);
-    Object.assign(ch, this.claimSpot(ch, node), { mode: 'working', node, nodeSince: now, dir: NODES[node].dir, goal: { type: 'node', node } });
+    const { dir } = this.layoutOf(this.bases.get(ch.project)).nodes[node];
+    Object.assign(ch, this.claimSpot(ch, node), { mode: 'working', node, nodeSince: now, dir, goal: { type: 'node', node } });
   }
 
   // A repository keeps its place while it has agents (or for good, when pinned); a new one takes
@@ -1506,7 +1605,8 @@ export class Empire {
     const pos = base ? this.coreOf(base) : this.reservations.get(project)?.pos;
     if (!pos) return;
     const now = performance.now();
-    const door = { x: pos.x + DOOR.x, y: pos.y + DOOR.y };
+    const { door: at } = this.layoutOf(base);
+    const door = { x: pos.x + at.x, y: pos.y + at.y };
     for (const id of ids) {
       const ch = this.chars.get(id);
       if (!ch?.isRecruit) continue;
@@ -1566,6 +1666,14 @@ export class Empire {
     else if (!isScouting && ch.mode === 'away') this.rideBack(ch, now);
   }
 
+  /** The camera goes to the scout, with the arrow over it; false while it is out reading. */
+  focusKnight() {
+    const ch = this.chars.get(KNIGHT_ID);
+    if (!ch || ch.mode === 'away') return false;
+    this.highlightAgent(KNIGHT_ID);
+    return true;
+  }
+
   addKnight() {
     const agent = { id: KNIGHT_ID, isKnight: true, entrypoint: 'knight', name: 'Batedor', title: 'Batedor', project: null, status: 'busy', activity: { kind: 'patrol', label: 'Patrulhando', since: Date.now() }, files: [], subagents: [] };
     const look = { ...S.makeLook(KNIGHT_ID, KNIGHT_ID, 'knight'), horse: KNIGHT_HORSE };
@@ -1599,8 +1707,10 @@ export class Empire {
 
   // In the yard, beside the town center's door, so the villagers' way in stays clear.
   knightStop(project) {
-    const { x, y } = this.coreOf(this.bases.get(project));
-    return { x: x + DOOR.x + 16, y: y + YARD_Y };
+    const base = this.bases.get(project);
+    const { x, y } = this.coreOf(base);
+    const { door, yardY } = this.layoutOf(base);
+    return { x: x + door.x + 16, y: y + yardY };
   }
 
   rideOut(ch, now) {
@@ -1679,6 +1789,7 @@ export class Empire {
       wonders: Object.fromEntries(this.wondersSeen),
       square: { ...this.square },
       plots: Object.fromEntries(this.plots),
+      mapEdge: this.hasBorderWall ? 'wall' : 'forest',
     };
   }
 
@@ -1691,6 +1802,11 @@ export class Empire {
     return coreOrigin(this.plotRect(base), base.coreX);
   }
 
+  /** How a base's core is laid out (base-local spots and sites): a lot's, or the half-lot one on smaller land; a new base's without one. */
+  layoutOf(base) {
+    return base ? coreLayout(base.size.w, base.size.h) : FULL_CORE;
+  }
+
   /** What stands on a base's land (plot.js), kept until the land changes. */
   planOf(base) {
     const key = `${base.size.w}x${base.size.h}@${base.coreX}`;
@@ -1699,6 +1815,11 @@ export class Empire {
     const plan = planPlot(base.project, base.size.w, base.size.h, base.coreX);
     this.plans.set(base.project, { key, plan });
     return plan;
+  }
+
+  /** A base's design with its town center grown with the land (plot.js), as the 2D map draws it. */
+  townDesignOf(base) {
+    return { ...this.designOf(base.project), growth: this.planOf(base).growth };
   }
 
   // A repository's land: its base's, else the one saved for it, else a new base's.
@@ -1970,9 +2091,10 @@ export class Empire {
   // The villagers of a moved base walk over to the new place (by the roads, like everyone).
   relocateCrew(base, now) {
     const { x, y } = this.coreOf(base);
+    const { door } = this.layoutOf(base);
     for (const ch of this.chars.values()) {
       if (ch.project !== base.project || ch.isObserver) continue;
-      if (now < ch.hiddenUntil) Object.assign(ch, { x: x + DOOR.x, y: y + DOOR.y });
+      if (now < ch.hiddenUntil) Object.assign(ch, { x: x + door.x, y: y + door.y });
       if (ch.goal?.type === 'exit') this.sendToExit(ch, now);
       else if (ch.goal?.type === 'node' || ch.mode === 'working') this.sendToNode(ch, ch.goal?.node ?? ch.node ?? nodeFor(ch.agent), now);
       else if (ch.goal?.type === 'enter') this.cancelExit(ch);
@@ -2429,23 +2551,26 @@ export class Empire {
   }
 
   /**
-   * Where the drag pulls the grabbed edges: lined up with the neighbours and with whole lots when
-   * close, from a new base's size up to three lots each way. The core keeps its place on the land.
+   * Where the drag pulls the grabbed edges: lined up with the neighbours, a half lot and whole lots
+   * when close, from a half lot up to three lots each way. The core keeps its place on the land (its
+   * middle, when the land crosses a lot's size and the core is laid out anew).
    */
   resizeTarget(drag, event) {
     const world = this.worldAt(event);
     const { rect: from, coreX } = drag.from;
     const [dx, dy] = [world.x - drag.start.x, world.y - drag.start.y];
     let [x0, y0, x1, y1] = [from.x, from.y, from.x + from.w, from.y + from.h];
-    const lots = (size) => [0, 1, 2].map((k) => size + k * (size + ROAD)); // one, two or three lots
+    const lots = (size, half) => [half, ...[0, 1, 2].map((k) => size + k * (size + ROAD))]; // a half lot, one, two or three lots
     const [xs, ys] = this.edgeTargets(drag.project, from);
-    if (drag.edges.includes('w')) x0 = Math.min(x1 - PLOT_W, Math.max(x1 - MAX_PLOT_W, roundToEven(snapTo(x0 + dx, [...xs, ...lots(PLOT_W).map((w) => x1 - w)]))));
-    if (drag.edges.includes('e')) x1 = Math.max(x0 + PLOT_W, Math.min(x0 + MAX_PLOT_W, roundToEven(snapTo(x1 + dx, [...xs, ...lots(PLOT_W).map((w) => x0 + w)]))));
-    if (drag.edges.includes('n')) y0 = Math.min(y1 - PLOT_H, Math.max(y1 - MAX_PLOT_H, roundToEven(snapTo(y0 + dy, [...ys, ...lots(PLOT_H).map((h) => y1 - h)]))));
-    if (drag.edges.includes('s')) y1 = Math.max(y0 + PLOT_H, Math.min(y0 + MAX_PLOT_H, roundToEven(snapTo(y1 + dy, [...ys, ...lots(PLOT_H).map((h) => y0 + h)]))));
+    if (drag.edges.includes('w')) x0 = Math.min(x1 - MIN_PLOT_W, Math.max(x1 - MAX_PLOT_W, roundToEven(snapTo(x0 + dx, [...xs, ...lots(PLOT_W, MIN_PLOT_W).map((w) => x1 - w)]))));
+    if (drag.edges.includes('e')) x1 = Math.max(x0 + MIN_PLOT_W, Math.min(x0 + MAX_PLOT_W, roundToEven(snapTo(x1 + dx, [...xs, ...lots(PLOT_W, MIN_PLOT_W).map((w) => x0 + w)]))));
+    if (drag.edges.includes('n')) y0 = Math.min(y1 - MIN_PLOT_H, Math.max(y1 - MAX_PLOT_H, roundToEven(snapTo(y0 + dy, [...ys, ...lots(PLOT_H, MIN_PLOT_H).map((h) => y1 - h)]))));
+    if (drag.edges.includes('s')) y1 = Math.max(y0 + MIN_PLOT_H, Math.min(y0 + MAX_PLOT_H, roundToEven(snapTo(y1 + dy, [...ys, ...lots(PLOT_H, MIN_PLOT_H).map((h) => y0 + h)]))));
     const rect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-    const core = Math.min(rect.w - PLOT_W, Math.max(0, from.x + coreX - x0));
-    return { rect, coreX: core, isValid: this.isSpotFree(rect, drag.project, false, rect) };
+    const [was, core] = [coreLayout(from.w, from.h), coreLayout(rect.w, rect.h)];
+    const middle = from.x + coreX + was.w / 2;
+    const at = Math.min(rect.w - core.w, Math.max(0, roundToEven(middle - core.w / 2 - x0)));
+    return { rect, coreX: at, isValid: this.isSpotFree(rect, drag.project, false, rect) };
   }
 
   // Lines an edge of `land` may snap to: the land's borders, flush with every neighbour, and a road
@@ -2488,7 +2613,8 @@ export class Empire {
     this.pinned.set(base.project, base.pos);
     this.saveLayout();
     this.refreshLayout(); // the new roads first: the walks below take them
-    if (before.x !== after.x || before.y !== after.y) this.relocateCrew(base, performance.now());
+    const isRelaid = coreLayout(rect.w, rect.h) !== this.layoutOf(base); // the core changed its layout: new spots
+    if (isRelaid || before.x !== after.x || before.y !== after.y) this.relocateCrew(base, performance.now());
   }
 
   // The selection box in world pixels.
@@ -2538,7 +2664,7 @@ export class Empire {
     while (owners[index]) index++;
     owners[index] = ch.id;
     ch.spot = { node, index };
-    const spots = NODES[node].spots;
+    const { spots } = this.layoutOf(base).nodes[node];
     const [sx, sy] = spots[index % spots.length];
     const nudge = Math.floor(index / spots.length) * 3; // a crowded site packs units a bit tighter
     const { x, y } = this.coreOf(base);
@@ -2705,8 +2831,10 @@ export class Empire {
       return;
     }
     // Back into the town center it came from.
-    const { x, y } = this.coreOf(this.bases.get(ch.project));
-    const door = { x: x + DOOR.x, y: y + DOOR.y };
+    const base = this.bases.get(ch.project);
+    const { x, y } = this.coreOf(base);
+    const { door: at } = this.layoutOf(base);
+    const door = { x: x + at.x, y: y + at.y };
     this.walk(ch, { type: 'exit' }, [...this.route(ch, { x: door.x, y: door.y + 5 }), door], now);
   }
 
@@ -2744,7 +2872,7 @@ export class Empire {
       ch.mode = 'working';
       ch.node = goal.node;
       ch.nodeSince = now;
-      ch.dir = NODES[goal.node].dir;
+      ch.dir = this.layoutOf(this.bases.get(ch.project)).nodes[goal.node].dir;
     } else if (goal?.type === 'poi') {
       ch.mode = 'poi';
       ch.dir = goal.poi.dir;
@@ -2793,7 +2921,7 @@ export class Empire {
     const from = this.baseAt(x, y);
     const dest = this.baseAt(to.x, to.y);
     if (from) {
-      const yard = this.coreOf(from).y + YARD_Y;
+      const yard = this.coreOf(from).y + this.layoutOf(from).yardY;
       push(x, yard);
       if (dest === from) {
         push(to.x, yard);
@@ -2807,7 +2935,7 @@ export class Empire {
     let goal = to;
     let tail = [];
     if (dest) {
-      const yard = this.coreOf(dest).y + YARD_Y;
+      const yard = this.coreOf(dest).y + this.layoutOf(dest).yardY;
       goal = gateExit(this.plotRect(dest), dest.coreX);
       tail = [[goal.x, yard], [to.x, yard], [to.x, to.y]];
     }
@@ -2893,7 +3021,7 @@ export class Empire {
     this.drawFogMist(ctx);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.collectSquare(drawables, lights, t);
-    this.collectUnits(drawables, t, now);
+    this.collectUnits(drawables, t, now, lights);
     this.collectBots(drawables, t, now);
     if (this.isIso) for (const prop of this.props) drawables.push({ x: prop.x, y: prop.y, draw: () => this.drawProp(ctx, prop) });
     for (const item of drawables) item.depth = this.project(item.x, item.y).y + (item.dz ?? 0);
@@ -2975,7 +3103,8 @@ export class Empire {
     S.drawTerritory(ctx, land.x, land.y, land.w, land.h, color, null, t);
     ctx.save();
     ctx.globalAlpha = 0.6;
-    this.billboard(core.x + DOOR.x, core.y + TOWN_CENTER.y + TOWN_CENTER.h, () => S.drawTownCenter(ctx, core.x + TOWN_CENTER.x, core.y + TOWN_CENTER.y, base.team, false, 1, this.designOf(base.project), t));
+    const { tc, door } = this.layoutOf(base);
+    this.billboard(core.x + door.x, core.y + tc.y + tc.h, () => S.drawTownCenter(ctx, core.x + tc.x, core.y + tc.y, base.team, false, 1, this.townDesignOf(base), t));
     ctx.restore();
   }
 
@@ -3008,39 +3137,45 @@ export class Empire {
       const atWork = new Set(live.filter((ch) => ch.mode === 'working' && ch.agent.status === 'busy').map((ch) => ch.node));
       const rise = Math.min(1, Math.max(0, (now - base.foundedAt) / FOUNDING_MS));
       const training = this.training.get(base.project);
-      const design = this.designOf(base.project);
-      const tcX = ox + TOWN_CENTER.x;
-      const tcY = oy + TOWN_CENTER.y;
+      const design = this.townDesignOf(base);
+      const lay = this.layoutOf(base);
+      const { tc, mine, forge, banner, bell, bench } = lay;
+      const tcX = ox + tc.x;
+      const tcY = oy + tc.y;
+      const tcFoot = [ox + lay.door.x, tcY + tc.h];
 
-      S.drawBaseGround(ctx, ox, oy, PLOT_W, PLOT_H, BASE_GROUND);
+      S.drawBaseGround(ctx, ox, oy, lay.w, lay.h, lay.ground);
       this.collectPlan(drawables, lights, base, design, sky.isNight, t);
       S.drawTerritory(ctx, land.x, land.y, land.w, land.h, base.team[0], isAlarm ? kindInfo('asking').color : null, t);
       if (isLinked) S.drawPlotGlow(ctx, land.x, land.y, land.w, land.h, LINK_COLOR, t);
-      drawables.push({ x: ox + 18, y: oy + 30, draw: () => S.drawMine(ctx, ox + 4, oy + 10, t, atWork.has('mine')) });
-      drawables.push({ x: ox + 110, y: oy + 32, draw: () => S.drawForge(ctx, ox + 96, oy + 8, t, atWork.has('forge')) });
-      drawables.push({ x: ox + BANNER.x, y: oy + BANNER.y, draw: () => S.drawBanner(ctx, ox + BANNER.x, oy + BANNER.y, base.team, t) });
-      for (const block of WAIT_FENCE_BLOCKS) {
+      const [drawMine, drawForge] = lay.isSmall ? [S.drawSmallMine, S.drawSmallForge] : [S.drawMine, S.drawForge];
+      drawables.push({ x: ox + mine.foot[0], y: oy + mine.foot[1], draw: () => drawMine(ctx, ox + mine.x, oy + mine.y, t, atWork.has('mine')) });
+      drawables.push({ x: ox + forge.foot[0], y: oy + forge.foot[1], draw: () => drawForge(ctx, ox + forge.x, oy + forge.y, t, atWork.has('forge')) });
+      if (banner) drawables.push({ x: ox + banner.x, y: oy + banner.y, draw: () => S.drawBanner(ctx, ox + banner.x, oy + banner.y, base.team, t) });
+      for (const block of lay.fenceBlocks) {
         const [x, y] = [ox + block.x, oy + block.y];
         drawables.push({ x, y, draw: () => S.drawFenceBlock(ctx, x, y, block) });
       }
+      if (bench) drawables.push({ x: ox + bench.x + bench.w / 2, y: oy + bench.y, draw: () => S.drawBench(ctx, ox + bench.x, oy + bench.y, bench.w) });
       const wonders = this.wondersOf(base.project);
-      if (wonders.includes('obelisk')) drawables.push({ x: ox + 16, y: oy + 76, draw: () => S.drawObelisk(ctx, ox + 16, oy + 76) });
-      if (wonders.includes('beacon')) drawables.push({ x: ox + 120, y: oy + 78, draw: () => S.drawBeacon(ctx, ox + 120, oy + 78, t) });
+      const [obelisk, beacon] = [[ox + lay.obelisk[0], oy + lay.obelisk[1]], [ox + lay.beacon[0], oy + lay.beacon[1]]];
+      if (wonders.includes('obelisk')) drawables.push({ x: obelisk[0], y: obelisk[1], draw: () => S.drawObelisk(ctx, ...obelisk) });
+      if (wonders.includes('beacon')) drawables.push({ x: beacon[0], y: beacon[1], draw: () => S.drawBeacon(ctx, ...beacon, t) });
       const ageUp = this.celebrations.get(base.project);
       if (ageUp !== undefined && now - ageUp < AGE_UP_MS) {
-        drawables.push({ x: ox + DOOR.x, y: oy + TOWN_CENTER.y + TOWN_CENTER.h, dz: 1000, draw: () => S.drawAgeUp(ctx, ox + DOOR.x, oy + TOWN_CENTER.y + TOWN_CENTER.h, t, (now - ageUp) / AGE_UP_MS) });
+        drawables.push({ x: tcFoot[0], y: tcFoot[1], dz: 1000, draw: () => S.drawAgeUp(ctx, ...tcFoot, t, (now - ageUp) / AGE_UP_MS) });
       } else if (ageUp !== undefined) {
         this.celebrations.delete(base.project);
       }
       // The town bell goes up only while an agent of this base is blocked on you.
-      if (isAlarm && rise === 1) drawables.push({ x: ox + BELL.x, y: oy + BELL.y, draw: () => S.drawBell(ctx, ox + BELL.x, oy + BELL.y, t, true) });
+      if (isAlarm && rise === 1) drawables.push({ x: ox + bell.x, y: oy + bell.y, draw: () => S.drawBell(ctx, ox + bell.x, oy + bell.y, t, true) });
       drawables.push({
-        x: ox + DOOR.x,
-        y: oy + TOWN_CENTER.y + TOWN_CENTER.h,
+        x: tcFoot[0],
+        y: tcFoot[1],
         draw: () => {
           S.drawTownCenter(ctx, tcX, tcY, base.team, sky.isNight, rise, design, t);
           if (rise < 1) return;
-          if (training) S.drawTrainingBar(ctx, ox + DOOR.x, oy + 2, Math.min(0.95, (now - training.since) / TRAINING_EXPECTED_MS));
+          if (training) S.drawTrainingBar(ctx, tcFoot[0], oy + 2 - S.townCenterLift(design), Math.min(0.95, (now - training.since) / TRAINING_EXPECTED_MS));
         },
       });
       // Lights shine where their sprite stands: shifted with its foot, like the sprite.
@@ -3048,15 +3183,17 @@ export class Empire {
         const p = this.project(footX, footY);
         S.drawGlow(ctx, x + Math.round(p.x - footX), y + Math.round(p.y - footY), radius, color, strength);
       };
-      const tcFoot = [ox + DOOR.x, oy + TOWN_CENTER.y + TOWN_CENTER.h];
+      const forgeFoot = [ox + forge.foot[0], oy + forge.foot[1]];
+      const furnace = lay.isSmall ? [forge.x + 4, forge.y + 11, 10] : [forge.x + 9, forge.y + 18, 16]; // its mouth and glow
       lights.push((darkness) => {
         for (const light of S.townCenterLights(design)) shine(...tcFoot, tcX + light.x, tcY + light.y, light.r, light.color, darkness * 1.2);
-        shine(ox + 110, oy + 32, ox + 105, oy + 26, 16, '#f97316', darkness * (atWork.has('forge') ? 1.6 : 0.9));
-        if (wonders.includes('beacon')) shine(ox + 120, oy + 78, ox + 120, oy + 50, 22, '#f97316', darkness * 1.6);
+        shine(...forgeFoot, ox + furnace[0], oy + furnace[1], furnace[2], '#f97316', darkness * (atWork.has('forge') ? 1.6 : 0.9));
+        if (wonders.includes('beacon')) shine(...beacon, beacon[0], beacon[1] - 28, 22, '#f97316', darkness * 1.6);
       });
       const reach = S.TOWN_REACH_SIDE;
-      this.pushSpriteHit({ x: tcX - reach, y: tcY - 8, w: TOWN_CENTER.w + 2 * reach, h: TOWN_CENTER.h + 8, z: tcFoot[1], project: base.project }, ...tcFoot);
-      this.pushSpriteHit({ x: ox + BANNER.x - 1, y: oy + BANNER.y - 29, w: 10, h: 30, z: oy + BANNER.y, project: base.project }, ox + BANNER.x, oy + BANNER.y);
+      const lift = 8 + S.townCenterLift(design);
+      this.pushSpriteHit({ x: tcX - reach, y: tcY - lift, w: tc.w + 2 * reach, h: tc.h + lift, z: tcFoot[1], project: base.project }, ...tcFoot);
+      if (banner) this.pushSpriteHit({ x: ox + banner.x - 1, y: oy + banner.y - 29, w: 10, h: 30, z: oy + banner.y, project: base.project }, ox + banner.x, oy + banner.y);
     }
   }
 
@@ -3068,6 +3205,11 @@ export class Empire {
     const { x: ox, y: oy } = base.pos;
     for (const yard of plan.yards) S.drawTrodden(ctx, ox + yard.x, oy + yard.y, yard.w, yard.h);
     for (const field of plan.fields) S.drawField(ctx, ox + field.x, oy + field.y, field.w, field.h, field.seed);
+    for (const prop of plan.props) {
+      const [x, y] = [ox + prop.x, oy + prop.y];
+      if (prop.kind === 'pond') S.drawPond(ctx, x, y, prop.w, prop.h, prop.seed, t);
+      else drawables.push({ x: x + prop.w / 2, y: y + prop.h, draw: () => S.drawPlotProp(ctx, x, y, prop, base.team, t) });
+    }
     plan.wallBlocks ??= wallBlocks(plan.walls ?? []);
     for (const block of plan.wallBlocks) {
       const [x, y] = [ox + block.x, oy + block.y];
@@ -3110,7 +3252,7 @@ export class Empire {
     this.pushSpriteHit({ x: sq.x + 66, y: sq.y + 14, w: 40, h: 27, z: sq.y + 41, square: true }, sq.x + 85, sq.y + 41);
   }
 
-  collectUnits(drawables, t, now) {
+  collectUnits(drawables, t, now, lights = []) {
     const ctx = this.ctx;
     for (const ch of this.chars.values()) {
       if (now < ch.hiddenUntil) continue;
@@ -3126,11 +3268,19 @@ export class Empire {
           y: ch.y,
           dz: isDangling ? HELD_DEPTH : 0,
           draw: () => {
+            if (!isDangling) S.drawKnightAura(ctx, ch.x, ch.y, t);
             S.drawShadow(ctx, ch.x, ch.y, 21);
-            swingAround(ctx, ch, (c) => S.drawKnight(c, ch.look, ch.x, ch.y - lift, ch.facing, isWalking || isDangling, isDangling ? kick : ch.frame, t, level));
+            swingAround(ctx, ch, (c) => S.drawKnightOutlined(c, ch.look, ch.x, ch.y - lift, ch.facing, isWalking || isDangling, isDangling ? kick : ch.frame, t, level));
           },
         });
         this.pushSpriteHit({ x: ch.x - 12, y: ch.y - lift - 29, w: 24, h: 30, z: ch.y, id: ch.id }, ch.x, ch.y);
+        // At night the aura is a light too, over the dark, so the hero is never lost.
+        if (!isDangling) {
+          lights.push((darkness) => {
+            const p = this.project(ch.x, ch.y);
+            S.drawKnightAura(ctx, p.x, p.y, t, darkness);
+          });
+        }
         continue;
       }
       if (ch.isObserver) {
@@ -3249,7 +3399,8 @@ export class Empire {
       const key = `base:${base.project}`;
       active.add(key);
       const land = this.plotRect(base);
-      this.placeBaseLabel(key, this.nameplatePoint(land), this.displayName(base.project), detail, kind, base.team[0], land.w);
+      const isAbove = this.layoutOf(base).isSmall; // a half-lot's town center fills its top: the plate stands over the land
+      this.placeBaseLabel(key, this.nameplatePoint(land, isAbove ? -NAMEPLATE_INSET : NAMEPLATE_INSET), this.displayName(base.project), detail, kind, base.team[0], land.w, isAbove);
       const spend = this.spend.get(base.project);
       if (spend?.tokens > 0) {
         active.add(`spend:${base.project}`);
@@ -3315,8 +3466,8 @@ export class Empire {
   // The plot's highest point on screen, just inside it: the top edge in 2D, the far side or corner in
   // iso and 3D whatever the turn. The nameplate hangs from there, heading its own block instead of
   // spilling onto the one below.
-  nameplatePoint(spot) {
-    const [x0, y0, x1, y1] = [NAMEPLATE_INSET, NAMEPLATE_INSET, spot.w - NAMEPLATE_INSET, spot.h - NAMEPLATE_INSET];
+  nameplatePoint(spot, inset = NAMEPLATE_INSET) {
+    const [x0, y0, x1, y1] = [inset, inset, spot.w - inset, spot.h - inset];
     const [mx, my] = [spot.w / 2, spot.h / 2];
     // Edge midpoints first: when a whole edge is level on screen, the plate stays centered on it.
     const candidates = [[mx, y0], [x1, my], [mx, y1], [x0, my], [x0, y0], [x1, y0], [x1, y1], [x0, y1]];
@@ -3328,7 +3479,7 @@ export class Empire {
     return top;
   }
 
-  placeBaseLabel(key, at, title, detail, kind, color, width = PLOT_W) {
+  placeBaseLabel(key, at, title, detail, kind, color, width = PLOT_W, isAbove = false) {
     let label = this.labels.get(key);
     if (!label) {
       label = document.createElement('div');
@@ -3337,6 +3488,7 @@ export class Empire {
       this.overlay.append(label);
       this.labels.set(key, label);
     }
+    label.classList.toggle('is-above', isAbove);
     const content = `${title}|${detail}|${kind}|${color}`;
     if (label.dataset.content !== content) {
       label.dataset.content = content;
@@ -3416,8 +3568,9 @@ export class Empire {
       return p && !p.isBehind ? p : null;
     }
     const core = this.coreOf(base);
-    const p = this.project(core.x + DOOR.x, core.y + TOWN_CENTER.y + TOWN_CENTER.h);
-    return { x: p.x, y: p.y - S.townCenterHeight(this.designOf(base.project)) - 3 };
+    const { tc, door } = this.layoutOf(base);
+    const p = this.project(core.x + door.x, core.y + tc.y + tc.h);
+    return { x: p.x, y: p.y - S.townCenterHeight(this.townDesignOf(base)) - 3 };
   }
 
   placeUnitLabel(key, ch, title, detail, kind) {
@@ -3425,18 +3578,25 @@ export class Empire {
     if (!label) {
       label = document.createElement('div');
       label.className = 'unit-label';
-      label.append(document.createElement('strong'), document.createElement('span'), this.createLabelMenuButton(label));
+      const branch = document.createElement('em');
+      branch.className = 'branch-tag';
+      label.append(document.createElement('strong'), document.createElement('span'), branch, this.createLabelMenuButton(label));
       this.overlay.append(label);
       this.labels.set(key, label);
     }
     label.dataset.agent = ch.id;
     label.classList.toggle('is-linked', this.linkedId === ch.id);
-    const content = `${title}|${detail}|${kind}`;
+    const branch = featureBranch(ch.agent) ?? '';
+    const content = `${title}|${detail}|${kind}|${branch}`;
     if (label.dataset.content !== content) {
       label.dataset.content = content;
       label.dataset.kind = kind;
       label.querySelector('strong').textContent = title;
       label.querySelector('span').textContent = detail; // not lastChild: unit labels end with the "…" button
+      const tag = label.querySelector('.branch-tag');
+      tag.textContent = branch;
+      tag.hidden = !branch;
+      tag.title = branch ? `Na branch ${branch}` : '';
     }
     const p = this.project(ch.x, ch.y);
     const pos = `${Math.round(p.x)}|${Math.round(p.y)}|${this.scale}`;

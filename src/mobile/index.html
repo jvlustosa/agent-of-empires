@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#14110c" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Agent of Empires</title>
+    <link rel="stylesheet" href="mobile.css" />
+  </head>
+  <body>
+    <header class="top">
+      <h1>Agent of Empires</h1>
+      <span class="live" id="live" role="status">conectando…</span>
+    </header>
+    <main>
+      <section class="pair" id="pair" hidden>
+        <h2>Conecte este celular</h2>
+        <p id="pair-text">No computador, abra o painel <strong>Celular</strong> (ícone de celular no topo da lista de agentes) e escaneie o QR code com a câmera.</p>
+      </section>
+      <section class="block" id="approvals-block" hidden>
+        <h2>Precisam de você <span class="count" id="approvals-count"></span></h2>
+        <ol class="list" id="approvals"></ol>
+      </section>
+      <section class="block" id="agents-block" hidden>
+        <h2>Agentes <span class="count" id="agents-count"></span></h2>
+        <ol class="list" id="agents"></ol>
+        <p class="empty" id="agents-empty" hidden>Nenhuma sessão do Claude Code aberta agora. Toque em “Novo agente” para colocar um para trabalhar.</p>
+      </section>
+    </main>
+    <button class="fab" id="new-open" type="button" hidden>+ Novo agente</button>
+
+    <dialog class="sheet" id="new-agent" aria-labelledby="new-title">
+      <form method="dialog" class="sheet-body" id="new-form">
+        <h2 id="new-title">Novo agente</h2>
+        <label class="label" for="new-project">Projeto</label>
+        <select class="field" id="new-project" required></select>
+        <label class="label" for="new-task">O que o agente deve fazer?</label>
+        <textarea class="field" id="new-task" rows="5" maxlength="4000" placeholder="Ex.: revisar o PR #32 e listar os riscos antes do merge" required></textarea>
+        <p class="note">Roda aqui no app do computador: aprovações e perguntas chegam nesta tela.</p>
+        <div class="actions">
+          <button class="btn" type="button" data-close>Cancelar</button>
+          <button class="btn btn-primary" type="submit" id="new-submit">Colocar para trabalhar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="sheet" id="reply" aria-labelledby="reply-title">
+      <form method="dialog" class="sheet-body" id="reply-form">
+        <h2 id="reply-title">Responder</h2>
+        <p class="reply-last" id="reply-last"></p>
+        <label class="label" for="reply-text">Sua mensagem</label>
+        <textarea class="field" id="reply-text" rows="4" maxlength="4000" placeholder="Ex.: pode seguir com a opção 2 e rodar os testes" required></textarea>
+        <div class="actions">
+          <button class="btn" type="button" data-close>Cancelar</button>
+          <button class="btn btn-primary" type="submit" id="reply-submit">Enviar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" hidden></div>
+    <script type="module" src="mobile.js"></script>
+  </body>
+</html>

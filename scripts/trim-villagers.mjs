@@ -2,14 +2,16 @@
 // src/models/kaykit-adventurers/: per character, the body, the cape and the hat, merged into one
 // skinned mesh for the body and cape and another for the hat, with quantized vertices; the clips the
 // map plays once, in a rig-only file, without the channels that never leave the rest pose. The pack
-// ships 76 clips, weapons and shields in each 3.6 MB character; what is left weighs about 150 KB.
+// ships 76 clips, weapons and shields in each 3.6 MB character; what is left weighs about 135 KB.
+// Each palette goes beside its model as a PNG: GLTFLoader reads embedded images through blob: URLs,
+// which the app's CSP blocks.
 //
 //   git clone --depth 1 https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0 /tmp/adventurers
 //   mkdir /tmp/trim && cd /tmp/trim && npm i @gltf-transform/core @gltf-transform/functions @gltf-transform/extensions
 //   node <repo>/scripts/trim-villagers.mjs /tmp/adventurers/addons/kaykit_character_pack_adventures/Characters/gltf
 //
 // glTF Transform is taken from the folder it runs in, so the repository needs no package.json.
-import { mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -22,12 +24,13 @@ const { dedup, joinPrimitives, prune, quantize, resample, transformPrimitive, we
 
 const SRC = process.argv[2];
 const OUT = join(dirname(fileURLToPath(import.meta.url)), '../src/models/kaykit-adventurers');
-// Each character's rigid parts that stay: the cape (body mesh) and the hat (its own mesh).
+// Each character's rigid parts that stay (the cape, in the body mesh, and the hat, its own mesh) and
+// its palette.
 const CHARACTERS = {
-  Knight: { cape: 'Knight_Cape', hat: 'Knight_Helmet' },
-  Barbarian: { cape: 'Barbarian_Cape', hat: 'Barbarian_Hat' },
-  Mage: { cape: 'Mage_Cape', hat: 'Mage_Hat' },
-  Rogue: { cape: 'Rogue_Cape' },
+  Knight: { cape: 'Knight_Cape', hat: 'Knight_Helmet', palette: 'knight_texture.png' },
+  Barbarian: { cape: 'Barbarian_Cape', hat: 'Barbarian_Hat', palette: 'barbarian_texture.png' },
+  Mage: { cape: 'Mage_Cape', hat: 'Mage_Hat', palette: 'mage_texture.png' },
+  Rogue: { cape: 'Rogue_Cape', palette: 'rogue_texture.png' },
 };
 const CLIPS = ['Idle', 'Walking_A', 'Running_A', 'Sit_Chair_Idle', '1H_Melee_Attack_Chop', '2H_Melee_Attack_Chop', 'Use_Item', '2H_Ranged_Aiming', '1H_Ranged_Aiming'];
 
@@ -63,10 +66,12 @@ function skinToParent(doc, node, joints) {
   return prim;
 }
 
-for (const [name, { cape, hat }] of Object.entries(CHARACTERS)) {
+for (const [name, { cape, hat, palette }] of Object.entries(CHARACTERS)) {
   const doc = await io.read(join(SRC, `${name}.glb`));
   const root = doc.getRoot();
   for (const anim of root.listAnimations()) dropAnimation(anim);
+  for (const texture of root.listTextures()) texture.dispose(); // the UVs stay (keepAttributes below)
+  copyFileSync(join(SRC, palette), join(OUT, `villager-${name.toLowerCase()}.png`));
   const skin = root.listSkins()[0];
   const joints = skin.listJoints();
   const meshNodes = root.listNodes().filter((node) => node.getMesh());
@@ -76,7 +81,7 @@ for (const [name, { cape, hat }] of Object.entries(CHARACTERS)) {
   add('Body', [...body, skinToParent(doc, meshNodes.find((node) => node.getName() === cape), joints)]);
   if (hat) add('Hat', [skinToParent(doc, meshNodes.find((node) => node.getName() === hat), joints)]);
   for (const node of meshNodes) node.dispose(); // weapons and shields go too
-  await doc.transform(prune(), dedup(), weld(), quantize({ quantizePosition: 14, quantizeNormal: 8, quantizeTexcoord: 12, quantizeWeight: 8 }));
+  await doc.transform(prune({ keepAttributes: true }), dedup(), weld(), quantize({ quantizePosition: 14, quantizeNormal: 8, quantizeTexcoord: 12, quantizeWeight: 8 }));
   await io.write(join(OUT, `villager-${name.toLowerCase()}.glb`), doc);
 }
 

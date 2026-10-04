@@ -2,11 +2,12 @@ import { createDeployDialog } from './deploy.js';
 import { createBaseCard } from './basecard.js';
 import { createBuildMenu, createSummon } from './hud.js';
 import { createDesignDialog } from './design.js';
-import { RESOURCES, createOverview, formatResource, resourceIcon, sumResources } from './overview.js';
+import { HEADLINE_RESOURCES, createOverview, formatResource, resourceIcon, sumResources } from './overview.js';
 import { createActionMenu, icon } from './menu.js';
-import { PHASES, formatElapsed, isObserver, kindInfo, phaseOf } from './kinds.js';
+import { PHASES, featureBranch, formatElapsed, isObserver, kindInfo, phaseOf } from './kinds.js';
 import { Empire, KNIGHT_ID, RECRUIT_CLOTH, WONDERS, mapClock } from './empire.js';
 import { createScout } from './scout.js';
+import { createPhonePanel } from './phone.js';
 import { createProgress } from './progress.js';
 import { createOnboarding } from './onboarding.js';
 import { createCampaign, createHelp } from './guide.js';
@@ -35,6 +36,7 @@ const musicVolumeInput = document.getElementById('music-volume');
 const musicStationSelect = document.getElementById('music-station');
 const musicNowEl = document.getElementById('music-now');
 const musicNextButton = document.getElementById('music-next');
+const musicQuickButton = document.getElementById('music-quick');
 const approvalsEl = document.getElementById('approvals');
 const settingsEl = document.getElementById('settings');
 const settingsBackdrop = document.getElementById('settings-backdrop');
@@ -106,7 +108,8 @@ let scoutPanel = null;
 
 const empire = new Empire(document.getElementById('map'), document.getElementById('overlay'), {
   onHover: showTooltip,
-  onSelect: (id, point) => (id === KNIGHT_ID ? scoutPanel?.open() : handleAgentClick(id, point)),
+  // The knight on the map opens on its routines: what it does, when and where.
+  onSelect: (id, point) => (id === KNIGHT_ID ? scoutPanel?.open({ tab: 'scout-tab-routines' }) : handleAgentClick(id, point)),
   onMenu: (id, anchor, opener) => (id === KNIGHT_ID ? scoutPanel?.open() : openAgentMenu(id, anchor, opener)),
   onMissions: (project) => scoutPanel?.open({ project }),
   onProjectClick: (project, point) => {
@@ -160,6 +163,16 @@ scoutPanel = createScout({
   // The task goes to the full dialog to be read and adjusted; only a started agent takes the mission.
   onTrain: (mission, project) => deployDialog.open(null, mission.task, project, null, () => scoutPanel.taken(mission, project)),
   onState: (scout) => empire.setScout(scout),
+  onFocus: () => {
+    if (!empire.focusKnight()) showToast('O batedor está em campo, lendo as fontes: ele volta com o relatório');
+  },
+  onShowPanel: () => setPanelCollapsed(false),
+  getHero3d: () => (empire.is3d ? empire.world3d : null),
+});
+
+createPhonePanel({
+  invoke: (command, args) => window.__TAURI__.core.invoke(command, args),
+  showToast: (message, isError) => showToast(message, isError),
 });
 
 const designDialog = createDesignDialog({
@@ -272,7 +285,7 @@ function renderResources() {
   const key = `${JSON.stringify(total)}|${population}`;
   if (resourcesEl.dataset.key === key) return;
   resourcesEl.dataset.key = key;
-  const items = RESOURCES.map((resource) => {
+  const items = HEADLINE_RESOURCES.map((resource) => {
     const item = el('span', 'resource');
     item.title = `${resource.name}: ${resource.hint}`;
     item.append(resourceIcon(resource.id), el('span', null, formatResource(resource.id, total[resource.id])));
@@ -549,6 +562,12 @@ function renderCard(agent) {
   top.append(el('strong', 'card-name', agent.name), el('span', 'chip', info.label));
   main.append(top);
   if (agent.title) main.append(el('span', 'card-title', agent.title));
+  const branch = featureBranch(agent);
+  if (branch) {
+    const tag = el('span', 'branch-tag', branch);
+    tag.title = `Na branch ${branch}`;
+    main.append(tag);
+  }
 
   const activity = el('span', 'card-activity');
   const label = isYourTurn(agent) ? 'Terminou, esperando sua resposta' : agent.activity.label;
@@ -2577,6 +2596,8 @@ function setPanelLeft(isLeft) {
 panelCollapseButton.addEventListener('click', () => setPanelCollapsed(true, { shouldFocus: true }));
 panelRail.addEventListener('click', () => setPanelCollapsed(false, { shouldFocus: true }));
 document.querySelectorAll('input[name="panel-side"]').forEach((radio) => radio.addEventListener('change', () => setPanelLeft(radio.value === 'left')));
+document.querySelector(`input[name="map-border"][value="${empire.hasBorderWall ? 'wall' : 'forest'}"]`).checked = true;
+document.querySelectorAll('input[name="map-border"]').forEach((radio) => radio.addEventListener('change', () => empire.setBorderWall(radio.value === 'wall')));
 window.addEventListener('keydown', (event) => {
   if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 'b') return;
   event.preventDefault();
@@ -2683,17 +2704,24 @@ soundToggle.addEventListener('change', () => {
   if (isSoundOn) sfx.playFinished(); // preview, and the click unlocks audio
 });
 musicToggle.checked = isMusicOn;
-musicToggle.addEventListener('change', () => {
-  isMusicOn = musicToggle.checked;
-  savePref(MUSIC_PREF_KEY, isMusicOn);
+musicToggle.addEventListener('change', () => setMusicOn(musicToggle.checked));
+// The note in the map's corner: same switch as Configurações › Som, one click away.
+musicQuickButton.addEventListener('click', () => setMusicOn(!isMusicOn));
+
+function setMusicOn(isOn) {
+  isMusicOn = isOn;
+  musicToggle.checked = isOn;
+  savePref(MUSIC_PREF_KEY, isOn);
   applyMusicOn();
-  sfx.setMusic(isMusicOn);
-});
+  sfx.setMusic(isOn);
+}
 
 function applyMusicOn() {
   musicVolumeInput.disabled = !isMusicOn;
   musicStationSelect.disabled = !isMusicOn;
   musicNextButton.disabled = !isMusicOn;
+  musicQuickButton.setAttribute('aria-pressed', String(isMusicOn));
+  musicQuickButton.title = isMusicOn ? 'Trilha sonora ligada: clique para desligar' : 'Trilha sonora desligada: clique para ligar';
   if (!isMusicOn) showMusicTrack(null);
 }
 

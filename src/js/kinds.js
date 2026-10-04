@@ -1,6 +1,8 @@
 // Activity kinds come from the server (lib/transcript.mjs TOOL_KINDS + derived states).
 export const KINDS = {
   terminal: { label: 'Terminal', color: '#4ade80' },
+  // A git or gh command in the shell: still the forge, with git's orange.
+  git: { label: 'No git', color: '#f05033' },
   coding: { label: 'Editando', color: '#60a5fa' },
   reading: { label: 'Lendo', color: '#f472b6' },
   web: { label: 'Na web', color: '#22d3ee' },
@@ -30,6 +32,14 @@ export function phaseOf(agent) {
   const recent = steps.slice(-PHASE_WINDOW);
   const count = (kind) => recent.filter((step) => step.kind === kind).length;
   return count('terminal') > count('coding') ? 2 : 1;
+}
+
+const TRUNK_BRANCHES = new Set(['main', 'master']);
+
+// The branch the agent works on when it is not the trunk (nor a detached HEAD); null otherwise.
+export function featureBranch(agent) {
+  const { branch } = agent;
+  return branch && !TRUNK_BRANCHES.has(branch) && branch !== 'HEAD' ? branch : null;
 }
 
 // claude-mem's observer sessions watch the other agents; they never take a desk or need the user.

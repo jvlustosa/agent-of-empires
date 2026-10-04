@@ -46,8 +46,13 @@ const KEEP_MS: i64 = 30 * DAY_MS;
 const MAX_MISSIONS_PER_ROUND: usize = 15;
 const MAX_SOURCES: usize = 8;
 const MAX_CHANNELS: usize = 12;
-const MAX_ROUTINES: usize = 5;
+// One per jewel of its equipment window: ring and amulet.
+const MAX_ROUTINES: usize = 2;
+/// The window's slots a connector can go in: shield, lance, cape and boots.
+const CONNECTOR_SLOTS: [&str; 4] = ["shield", "lance", "cape", "boots"];
 const TARGETS_MAX: usize = 300;
+// A routine's own prompt: what it looks for, in the user's words.
+const ROUTINE_PROMPT_MAX: usize = 1000;
 const TITLE_MAX: usize = 100;
 const WHY_MAX: usize = 300;
 // Below the 4000 of deploy_agent, so the user can still add to the task.
@@ -83,7 +88,7 @@ struct ConnectorSpec {
     how: &'static str,
 }
 
-const CONNECTORS: [ConnectorSpec; 3] = [
+const CONNECTORS: [ConnectorSpec; 4] = [
     ConnectorSpec {
         id: "slack",
         name: "Slack",
@@ -137,6 +142,26 @@ only when the snippet is not enough. Source label: Gmail. Source link: https://m
         how: "Look at: {targets}. Find them with notion-search and read them with notion-fetch; consider only what was created \
 or edited after {since_iso}. Source label: Notion. Source link: the page URL.",
     },
+    ConnectorSpec {
+        id: "drive",
+        name: "Google Drive",
+        tools: &[
+            "mcp__claude_ai_Google_Drive__search_files",
+            "mcp__claude_ai_Google_Drive__get_file_metadata",
+            "mcp__claude_ai_Google_Drive__read_file_content",
+        ],
+        denied: &[
+            "mcp__claude_ai_Google_Drive__create_file",
+            "mcp__claude_ai_Google_Drive__update_file",
+            "mcp__claude_ai_Google_Drive__copy_file",
+            "mcp__claude_ai_Google_Drive__share_file",
+            "mcp__claude_ai_Google_Drive__trash_file",
+        ],
+        hosts: &["docs.google.com", "drive.google.com"],
+        how: "Look at: {targets}. Find the files with search_files and read with read_file_content only those changed after \
+{since_iso} that may hold a demand (feedback, a spec, a list of bugs). Source label: Drive. Source link: the file's web link \
+(https://docs.google.com/... or https://drive.google.com/...).",
+    },
 ];
 
 static STATE_PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -163,8 +188,10 @@ pub fn is_scout_dir(cwd: &str) -> bool {
 pub struct Connector {
     pub id: String,
     pub is_on: bool,
-    /// What to read there: Slack channels, a Gmail search, Notion pages or databases.
+    /// What to read there: Slack channels, a Gmail search, Notion pages or databases, Drive files.
     pub targets: String,
+    /// Where it hangs in the equipment window ("shield", "lance", "cape", "boots"); empty in the bag.
+    pub slot: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -178,8 +205,10 @@ pub struct Routine {
     pub from_hour: u32,
     pub to_hour: u32,
     pub is_weekdays_only: bool,
-    /// Extra instruction for this routine's rounds ("só bugs críticos").
+    /// The routine's prompt: what this round looks for ("só bugs críticos do #ac-tickets").
     pub focus: String,
+    /// The connectors this routine reads, by id; empty reads every one that is on.
+    pub connectors: Vec<String>,
     pub last_run_at: Option<i64>,
 }
 
@@ -274,6 +303,15 @@ pub struct Source {
     pub url: String,
 }
 
+/// A connector linked to the user's Claude account; `id` is set when the scout can carry it
+/// (its read tools are mapped above).
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedConnector {
+    pub name: String,
+    pub id: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillInfo {
@@ -325,6 +363,38 @@ pub fn get_scout() -> ScoutState {
 #[tauri::command]
 pub async fn list_scout_skills() -> Vec<SkillInfo> {
     tauri::async_runtime::spawn_blocking(|| read_skills().into_iter().map(|(info, _)| info).collect()).await.unwrap_or_default()
+}
+
+/// The connectors linked to the user's Claude account, its bag: Claude Code keeps their names in
+/// `.claude.json` (claudeAiMcpEverConnected). Only that list is read.
+#[tauri::command]
+pub async fn list_scout_connectors() -> Vec<LinkedConnector> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let path = std::env::var_os("CLAUDE_CONFIG_DIR")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .map(|dir| dir.join(".claude.json"));
+        let config: Option<Value> = path.and_then(|path| fs::read(path).ok()).and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        config.map_or_else(Vec::new, |config| linked_connectors(&config))
+    })
+    .await
+    .unwrap_or_default()
+}
+
+fn linked_connectors(config: &Value) -> Vec<LinkedConnector> {
+    let names = config.get("claudeAiMcpEverConnected").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut linked: Vec<LinkedConnector> = names
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(|name| name.strip_prefix("claude.ai "))
+        .map(|name| {
+            let id = CONNECTORS.iter().find(|spec| spec.name.eq_ignore_ascii_case(name)).map(|spec| spec.id.to_string());
+            LinkedConnector { name: clip(name, 60), id }
+        })
+        .collect();
+    // The ones it can carry first, then by name.
+    linked.sort_by(|a, b| a.id.is_none().cmp(&b.id.is_none()).then(a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    linked
 }
 
 /// Saves what it carries; routines keep when they last ran.
@@ -408,10 +478,46 @@ pub async fn start_scout(app: AppHandle, bases: Vec<String>) -> Result<(), Strin
     ride_out(app, None).await
 }
 
+/// One routine's flow right now, whatever its schedule says (the "Rodar agora" of its card).
+#[tauri::command]
+pub async fn run_routine(app: AppHandle, id: String) -> Result<(), String> {
+    let routine = current().equipment.routines.into_iter().find(|routine| routine.id == id).ok_or("Essa rotina não existe mais")?;
+    ride_out(app, Some(routine)).await
+}
+
+/// The exact text the scout gets on its next round (of that routine, or a manual one): its bases,
+/// sources, known missions, experience, rules and skills. Nothing runs.
+#[tauri::command]
+pub async fn scout_prompt(routine_id: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = current();
+        let routine = routine_id.and_then(|id| state.equipment.routines.iter().find(|routine| routine.id == id).cloned());
+        let connectors = round_connectors(&state, routine.as_ref());
+        let skills: Vec<(SkillInfo, String)> = read_skills().into_iter().filter(|(info, _)| state.equipment.skills.contains(&info.name)).collect();
+        let bases = resolve_village(&state.village);
+        Ok(build_prompt(&bases, &connectors, &skills, &state, routine.as_ref(), crate::usage::now_ms()))
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// The sources a round reads: the connectors that are on, narrowed to the routine's own if it has some.
+fn round_connectors(state: &ScoutState, routine: Option<&Routine>) -> Vec<Connector> {
+    state
+        .equipment
+        .connectors
+        .iter()
+        .filter(|c| c.is_on && spec(&c.id).is_some())
+        .filter(|c| routine.map_or(true, |routine| routine.connectors.is_empty() || routine.connectors.contains(&c.id)))
+        .cloned()
+        .collect()
+}
+
 async fn ride_out(app: AppHandle, routine: Option<Routine>) -> Result<(), String> {
     let state = current();
-    if !state.equipment.connectors.iter().any(|connector| connector.is_on) {
-        return Err("Equipe o batedor com um conector (Slack, Gmail ou Notion)".into());
+    if round_connectors(&state, routine.as_ref()).is_empty() {
+        let what = if routine.is_some() { "Essa rotina não tem fonte ligada" } else { "Equipe o batedor com um conector" };
+        return Err(format!("{what}: escudo, lança, capa ou botas"));
     }
     if IS_SCOUTING.swap(true, Ordering::SeqCst) {
         return Err("O batedor já está em campo".into());
@@ -563,10 +669,19 @@ fn check_equipment(equipment: Equipment, known_skills: &[String], slots: usize) 
             continue;
         }
         let targets = if spec.id == "slack" { parse_channels(&connector.targets)?.join(", ") } else { clip(connector.targets.trim(), TARGETS_MAX) };
+        if !connector.slot.is_empty() && !CONNECTOR_SLOTS.contains(&connector.slot.as_str()) {
+            return Err("Esse espaço não leva conector".into());
+        }
+        if !connector.slot.is_empty() && connectors.iter().any(|known| known.slot == connector.slot) {
+            return Err("Dois conectores no mesmo espaço".into());
+        }
+        if connector.is_on && connector.slot.is_empty() {
+            return Err(format!("Ponha o {} num espaço antes de ligar", spec.name));
+        }
         if connector.is_on && targets.is_empty() {
             return Err(format!("Diga o que o batedor deve ler no {}", spec.name));
         }
-        connectors.push(Connector { id: connector.id, is_on: connector.is_on, targets });
+        connectors.push(Connector { id: connector.id, is_on: connector.is_on, targets, slot: connector.slot });
     }
     let mut skills: Vec<String> = Vec::new();
     for skill in equipment.skills {
@@ -593,7 +708,17 @@ fn check_equipment(equipment: Equipment, known_skills: &[String], slots: usize) 
         }
         let id = if routine.id.is_empty() { format!("r{}-{index}", crate::usage::now_ms()) } else { clip(&routine.id, 40) };
         let label = clip(routine.label.trim(), 40);
-        routines.push(Routine { id, label, focus: clip(routine.focus.trim(), TARGETS_MAX), last_run_at: None, ..routine });
+        let mut sources: Vec<String> = Vec::new();
+        for connector in &routine.connectors {
+            if spec(connector).is_none() {
+                return Err("Conector desconhecido na rotina".into());
+            }
+            if !sources.contains(connector) {
+                sources.push(connector.clone());
+            }
+        }
+        let focus = clip(routine.focus.trim(), ROUTINE_PROMPT_MAX);
+        routines.push(Routine { id, label, focus, connectors: sources, last_run_at: None, ..routine });
     }
     Ok(Equipment { connectors, skills, routines })
 }
@@ -656,7 +781,7 @@ fn resolve_village(names: &[String]) -> Vec<Base> {
 fn round(bases: &[Base], routine: Option<&Routine>) -> Result<ScoutState, String> {
     let started_at = crate::usage::now_ms();
     let state = current();
-    let connectors: Vec<Connector> = state.equipment.connectors.iter().filter(|c| c.is_on && spec(&c.id).is_some()).cloned().collect();
+    let connectors = round_connectors(&state, routine);
     let skills: Vec<(SkillInfo, String)> = read_skills().into_iter().filter(|(info, _)| state.equipment.skills.contains(&info.name)).collect();
     let prompt = build_prompt(bases, &connectors, &skills, &state, routine, started_at);
     let outcome = run_claude(&prompt, &connectors).and_then(|output| read_report(&output, &connectors));
@@ -879,7 +1004,7 @@ fn build_prompt(bases: &[Base], connectors: &[Connector], skills: &[(SkillInfo, 
     let focus = routine
         .map(|routine| routine.focus.trim())
         .filter(|focus| !focus.is_empty())
-        .map_or(String::new(), |focus| format!("\n\n## Focus of this round\n{focus}"));
+        .map_or(String::new(), |focus| format!("\n\n## This routine's prompt (follow it within the rules above)\n{focus}"));
     format!(
         "You are the scout (\"batedor\") of Agent of Empires, a desktop map where each git repository is a base and each \
 Claude Code session a villager. Read the sources below and bring back the demands that could become code changes in \
@@ -1121,6 +1246,7 @@ mod tests {
         assert!(is_source_url("https://slack.com/archives/C1/p123"));
         assert!(is_source_url("https://mail.google.com/mail/u/0/#all/18c2"));
         assert!(is_source_url("https://www.notion.so/Roadmap-abc123"));
+        assert!(is_source_url("https://docs.google.com/document/d/abc/edit"));
         assert!(!is_source_url("http://acme.slack.com/archives/C1/p123"));
         assert!(!is_source_url("https://evil.com/archives?x=.slack.com"));
         assert!(!is_source_url("https://slack.com.evil.com/archives"));
@@ -1219,7 +1345,7 @@ mod tests {
     #[test]
     fn equipment_is_checked_against_skills_and_slots() {
         let skills = vec!["cj-code-review".to_string(), "julius-mode".to_string()];
-        let slack = Connector { id: "slack".into(), is_on: true, targets: "AC-Tickets dev-bug-report".into() };
+        let slack = Connector { id: "slack".into(), is_on: true, targets: "AC-Tickets dev-bug-report".into(), slot: "shield".into() };
         let equipment = Equipment { connectors: vec![slack.clone()], skills: vec!["cj-code-review".into()], routines: vec![routine(60, None)] };
         let checked = check_equipment(equipment.clone(), &skills, 1).unwrap();
         assert_eq!(checked.connectors[0].targets, "#ac-tickets, #dev-bug-report");
@@ -1227,8 +1353,12 @@ mod tests {
         assert!(check_equipment(Equipment { skills: vec!["../../etc".into()], ..equipment.clone() }, &skills, 3).is_err());
         let unknown = Connector { id: "jira".into(), ..slack.clone() };
         assert!(check_equipment(Equipment { connectors: vec![unknown], ..equipment.clone() }, &skills, 1).is_err());
-        let empty = Connector { targets: " ".into(), ..slack };
+        let empty = Connector { targets: " ".into(), ..slack.clone() };
         assert!(check_equipment(Equipment { connectors: vec![empty], ..equipment.clone() }, &skills, 1).is_err());
+        let drive = Connector { id: "drive".into(), is_on: false, targets: String::new(), slot: "shield".into() };
+        assert!(check_equipment(Equipment { connectors: vec![slack.clone(), drive], ..equipment.clone() }, &skills, 1).is_err());
+        let unplaced = Connector { slot: String::new(), ..slack.clone() };
+        assert!(check_equipment(Equipment { connectors: vec![unplaced], ..equipment.clone() }, &skills, 1).is_err());
         let backwards = Routine { from_hour: 19, to_hour: 8, ..routine(60, None) };
         assert!(check_equipment(Equipment { routines: vec![backwards], ..equipment }, &skills, 1).is_err());
     }
@@ -1240,6 +1370,29 @@ mod tests {
         assert_eq!(description, "Sorts tickets by urgency");
         assert_eq!(body, "# Triage\nSteps");
         assert_eq!(parse_skill("---\nname: x\ndescription: \"One line\"\n---\nBody").1, "One line");
+    }
+
+    #[test]
+    fn linked_connectors_come_from_claude_with_the_carriable_ones_first() {
+        let config = json!({ "claudeAiMcpEverConnected": ["claude.ai Metabase", "claude.ai Slack", "local server", "claude.ai Notion"] });
+        let names: Vec<(String, Option<String>)> = linked_connectors(&config).into_iter().map(|c| (c.name, c.id)).collect();
+        assert_eq!(
+            names,
+            [("Notion".to_string(), Some("notion".to_string())), ("Slack".to_string(), Some("slack".to_string())), ("Metabase".to_string(), None)]
+        );
+        assert!(linked_connectors(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn a_routine_reads_only_its_own_sources_among_those_on() {
+        let on = |id: &str| Connector { id: id.into(), is_on: true, targets: "x".into(), slot: String::new() };
+        let mut state = ScoutState::default();
+        state.equipment.connectors = vec![on("slack"), on("gmail"), Connector { is_on: false, ..on("notion") }];
+        let ids = |connectors: Vec<Connector>| connectors.into_iter().map(|c| c.id).collect::<Vec<_>>();
+        assert_eq!(ids(round_connectors(&state, None)), ["slack", "gmail"]);
+        let only_gmail = Routine { connectors: vec!["gmail".into(), "notion".into()], ..routine(60, None) };
+        assert_eq!(ids(round_connectors(&state, Some(&only_gmail))), ["gmail"]);
+        assert_eq!(ids(round_connectors(&state, Some(&routine(60, None)))), ["slack", "gmail"]);
     }
 
     #[test]

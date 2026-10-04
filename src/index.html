@@ -27,6 +27,7 @@
           <button class="hud-build" id="build-open" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Construir" title="Construir: escolha um repositório e clique no mapa para fundar a base dele (tecla B)"><canvas class="unit-portrait" id="build-icon" width="12" height="13" aria-hidden="true"></canvas><kbd class="hud-key" aria-hidden="true">B</kbd></button>
           <div class="hud-summon">
             <button class="summon-token" type="button" draggable="false" data-mode="cursor" aria-label="Recrutar aldeão" title="Recrutar aldeão: clique e um recruta aparece na praça (ou arraste: no chão ele fica ali, numa base já começa lá). Selecione e clique numa base para pôr para trabalhar; ele abre no Cursor"><canvas class="unit-portrait" id="summon-icon" width="12" height="13" aria-hidden="true"></canvas></button>
+            <button class="hud-build hud-scout" id="scout-open" type="button" aria-label="O Batedor" title="O Batedor: clique para ir até ele no mapa; duplo clique abre as missões, o equipamento e o diário (tecla K)"><canvas class="unit-portrait" id="scout-icon" width="12" height="13" aria-hidden="true"></canvas><kbd class="hud-key" aria-hidden="true">K</kbd><span class="scout-badge" id="scout-badge" hidden></span></button>
           </div>
           <form class="command-bar" id="command-bar" autocomplete="off">
             <select class="command-target" id="command-target" aria-label="Para quem" hidden></select>
@@ -48,22 +49,23 @@
           <button class="icon-button" id="map-only" type="button" aria-pressed="false" aria-label="Só o mapa" title="Só o mapa: esconde o comando e o painel (tecla F)">⛶</button>
           <button class="icon-button" id="view-rotate" type="button" aria-label="Girar a câmera" title="Girar a câmera (Q / E)" hidden>⟳</button>
           <button class="icon-button" id="overview-open" type="button" aria-label="Visão do império" title="Visão do império: todas as bases, recursos e a névoa (tecla I)"><svg viewBox="0 0 9 9" width="14" height="14" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="0" y="1" width="1" height="2"/><rect x="2" y="1" width="1" height="2"/><rect x="6" y="1" width="1" height="2"/><rect x="8" y="1" width="1" height="2"/><rect x="0" y="3" width="3" height="6"/><rect x="6" y="3" width="3" height="6"/><rect x="3" y="0" width="1" height="2"/><rect x="5" y="0" width="1" height="2"/><rect x="3" y="2" width="3" height="7"/></svg></button>
-          <button class="icon-button scout-open" id="scout-open" type="button" aria-haspopup="dialog" aria-label="O Batedor" title="O Batedor: missões que ele traz do Slack, Gmail e Notion, o equipamento e o diário (tecla K)"><canvas class="unit-portrait" id="scout-icon" width="9" height="11" aria-hidden="true"></canvas><span class="scout-badge" id="scout-badge" hidden></span></button>
           <button class="idle-button" id="idle-villager" type="button" aria-label="Ir para o próximo aldeão ocioso" title="Aldeão ocioso: vai para o próximo agente esperando você (tecla .)" disabled><svg viewBox="0 0 9 9" width="14" height="14" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="2" y="0" width="5" height="1"/><rect x="1" y="1" width="7" height="1"/><rect x="3" y="2" width="3" height="2"/><rect x="2" y="4" width="5" height="3"/><rect x="2" y="7" width="2" height="2"/><rect x="5" y="7" width="2" height="2"/></svg><span id="idle-count">0</span></button>
           <button class="icon-button" id="view-zoom-out" type="button" aria-label="Afastar o mapa">−</button>
           <output class="zoom-value" id="view-zoom-value" title="Rodinha sobre o mapa aproxima no ponteiro; Shift + rodinha anda para o lado">100%</output>
           <button class="icon-button" id="view-zoom-in" type="button" aria-label="Aproximar o mapa">+</button>
           <button class="icon-button" id="view-zoom-fit" type="button" aria-label="Caber na tela" title="Caber na tela">⤢</button>
+          <button class="icon-button music-quick" id="music-quick" type="button" aria-pressed="true" aria-label="Trilha sonora"><svg viewBox="0 0 9 9" width="14" height="14" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="5" y="0" width="1" height="7"/><rect x="6" y="0" width="1" height="2"/><rect x="7" y="2" width="1" height="2"/><rect x="3" y="5" width="2" height="1"/><rect x="2" y="6" width="4" height="2"/><rect x="3" y="8" width="2" height="1"/><g class="music-quick-slash"><rect x="0" y="0" width="1" height="1"/><rect x="1" y="1" width="1" height="1"/><rect x="2" y="2" width="1" height="1"/><rect x="3" y="3" width="1" height="1"/><rect x="4" y="4" width="1" height="1"/><rect x="5" y="5" width="1" height="1"/><rect x="6" y="6" width="1" height="1"/><rect x="7" y="7" width="1" height="1"/><rect x="8" y="8" width="1" height="1"/></g></svg></button>
         </div>
       </div>
       <aside class="panel">
         <button class="panel-rail" id="panel-rail" type="button" aria-label="Abrir o painel" title="Abrir o painel (Ctrl+B)"><span class="panel-rail-arrow" id="panel-rail-arrow" aria-hidden="true">«</span><span class="panel-rail-label" aria-hidden="true">Agentes</span></button>
         <header class="panel-head">
           <div class="panel-title">
-            <h1>Agent of Empires</h1>
+            <h1><img class="panel-logo" src="logo.png" alt="" width="32" height="32" />Agent of Empires</h1>
             <div class="panel-actions">
               <button class="refresh refresh-primary" id="deploy-open" type="button" title="Colocar um agente para trabalhar num projeto (Ctrl+K)">+ Agente</button>
               <button class="icon-button" id="auto-approve-toggle" type="button" aria-pressed="false" aria-label="Aprovar tudo sozinho por 10 minutos" title="Aprovar tudo sozinho por 10 min: cada pedido de permissão é aprovado na hora. Perguntas e planos continuam com você."><svg viewBox="0 0 9 9" width="14" height="14" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="4" y="0" width="3" height="1"/><rect x="3" y="1" width="3" height="1"/><rect x="2" y="2" width="3" height="1"/><rect x="1" y="3" width="7" height="1"/><rect x="4" y="4" width="3" height="1"/><rect x="3" y="5" width="3" height="1"/><rect x="3" y="6" width="2" height="1"/><rect x="2" y="7" width="2" height="1"/><rect x="2" y="8" width="1" height="1"/></svg></button>
+              <button class="icon-button phone-open" id="phone-open" type="button" aria-haspopup="dialog" aria-label="Celular" title="Celular: veja os agentes, aprove pedidos e dê comandos pelo celular"><svg viewBox="0 0 9 9" width="14" height="14" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="2" y="0" width="5" height="1"/><rect x="2" y="1" width="1" height="7"/><rect x="6" y="1" width="1" height="7"/><rect x="3" y="6" width="3" height="1"/><rect x="4" y="7" width="1" height="1"/><rect x="2" y="8" width="5" height="1"/></svg><span class="phone-dot" aria-hidden="true"></span></button>
               <button class="icon-button" id="refresh" type="button" aria-label="Atualizar" title="Atualizar: relê todas as sessões e recarrega a tela (F5)">⟳</button>
               <button class="icon-button" id="settings-open" type="button" aria-label="Configurações" aria-expanded="false" aria-controls="settings"><svg viewBox="0 0 9 9" width="14" height="14" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="3" y="0" width="3" height="1"/><rect x="1" y="1" width="7" height="1"/><rect x="0" y="3" width="1" height="3"/><rect x="8" y="3" width="1" height="3"/><rect x="1" y="2" width="2" height="5"/><rect x="6" y="2" width="2" height="5"/><rect x="3" y="2" width="3" height="1"/><rect x="3" y="6" width="3" height="1"/><rect x="1" y="7" width="7" height="1"/><rect x="3" y="8" width="3" height="1"/></svg></button>
               <button class="icon-button" id="panel-collapse" type="button" aria-label="Recolher o painel" title="Recolher o painel (Ctrl+B). O lado fica em Configurações">»</button>
@@ -77,6 +79,7 @@
           <button class="link-button" id="auto-approve-stop" type="button">Parar</button>
         </div>
         <ol class="approvals" id="approvals" aria-label="Pedidos de aprovação" hidden></ol>
+        <section class="scout-strip" id="scout-strip" aria-label="O Batedor" hidden></section>
         <ol class="agent-list" id="agent-list"></ol>
         <footer class="panel-foot">
           <span id="status">Conferindo as sessões a cada segundo</span>
@@ -106,6 +109,17 @@
             <label class="deploy-mode">
               <input type="radio" name="map-view" value="3d" />
               <span><strong>3D isométrico (padrão)</strong><small>Mundo em 3D na diagonal, estilo Ragnarok e Age of Empires: relevo, sol e sombras, prédios e aldeões em 3D.</small></span>
+            </label>
+          </fieldset>
+          <fieldset class="deploy-modes view-setting">
+            <legend class="toggle-text">Borda do mapa</legend>
+            <label class="deploy-mode">
+              <input type="radio" name="map-border" value="wall" />
+              <span><strong>Muralha (padrão)</strong><small>Muro de pedra alto com ameias e torres em volta do mapa, e um portão com grade levadiça na estrada principal.</small></span>
+            </label>
+            <label class="deploy-mode">
+              <input type="radio" name="map-border" value="forest" />
+              <span><strong>Floresta</strong><small>Uma fileira de árvores em volta do mapa.</small></span>
             </label>
           </fieldset>
           <fieldset class="deploy-modes view-setting">
@@ -216,7 +230,7 @@
           <aside class="project-preview" id="deploy-preview" aria-label="Prévia do projeto escolhido"></aside>
         </div>
         <label class="field-label" for="deploy-task"><span class="step" aria-hidden="true">2</span>O que o agente deve fazer?</label>
-        <textarea class="field" id="deploy-task" rows="4" placeholder="Ex.: revisar o PR #32 e listar os riscos antes do merge"></textarea>
+        <textarea class="field" id="deploy-task" rows="8" placeholder="Ex.: revisar o PR #32 e listar os riscos antes do merge"></textarea>
         <fieldset class="deploy-modes" aria-describedby="deploy-mode-hint">
           <legend class="field-label"><span class="step" aria-hidden="true">3</span>Onde ele trabalha</legend>
           <div class="deploy-mode-options">
@@ -328,7 +342,11 @@
       <div class="modal-body">
         <p class="overview-summary" id="overview-summary"></p>
         <div class="overview-totals" id="overview-totals"></div>
-        <p class="modal-note">Recursos dos últimos 7 dias, somando as bases do império. Tudo vem do git e das sessões do Claude Code nesta máquina.</p>
+        <p class="modal-note">Ouro e tokens dos últimos 7 dias, somando as bases do império. Tudo vem do git e das sessões do Claude Code nesta máquina.</p>
+        <h3 class="field-label overview-section-title">Tokens e custo · últimos 30 dias</h3>
+        <div class="overview-spend" id="overview-spend"></div>
+        <p class="modal-note">Quanto o uso custaria pago por requisição na API do Claude, pelo preço de lista de cada modelo (cache incluído), contra o preço de tabela da sua assinatura. Conta as sessões nos repositórios de ~/Code.</p>
+        <h3 class="field-label overview-section-title">Bases · últimos 7 dias</h3>
         <div class="overview-table-wrap">
           <table class="overview-table">
             <thead>
@@ -356,7 +374,7 @@
       </header>
       <div class="modal-body">
         <div class="scout-hero">
-          <canvas class="scout-portrait" id="scout-portrait" width="32" height="34" role="img" aria-label="O Batedor, a cavalo"></canvas>
+          <canvas class="scout-portrait" id="scout-portrait" width="64" height="68" role="img" aria-label="O Batedor, a cavalo"></canvas>
           <div class="scout-hero-text">
             <p class="scout-rank" id="scout-rank"></p>
             <div class="scout-xp" id="scout-xp" role="meter" aria-label="Experiência" aria-valuemin="0"><span></span></div>
@@ -366,34 +384,102 @@
           <button class="btn btn-primary" id="scout-send" type="button">Enviar batedor</button>
         </div>
         <div class="scout-tabs" role="tablist" aria-label="O Batedor">
-          <button class="scout-tab" id="scout-tab-missions" type="button" role="tab" aria-selected="true" aria-controls="scout-missions-panel">Missões <span class="scout-tab-count" id="scout-missions-count"></span></button>
-          <button class="scout-tab" id="scout-tab-equipment" type="button" role="tab" aria-selected="false" aria-controls="scout-equipment-panel" tabindex="-1">Equipamento</button>
+          <button class="scout-tab" id="scout-tab-equipment" type="button" role="tab" aria-selected="true" aria-controls="scout-equipment-panel">Equipamento</button>
+          <button class="scout-tab" id="scout-tab-routines" type="button" role="tab" aria-selected="false" aria-controls="scout-routines-panel" tabindex="-1">Rotinas</button>
+          <button class="scout-tab" id="scout-tab-abilities" type="button" role="tab" aria-selected="false" aria-controls="scout-abilities-panel" tabindex="-1">Habilidades</button>
+          <button class="scout-tab" id="scout-tab-missions" type="button" role="tab" aria-selected="false" aria-controls="scout-missions-panel" tabindex="-1">Missões <span class="scout-tab-count" id="scout-missions-count"></span></button>
           <button class="scout-tab" id="scout-tab-journal" type="button" role="tab" aria-selected="false" aria-controls="scout-journal-panel" tabindex="-1">Diário</button>
         </div>
-        <div class="scout-panel" id="scout-missions-panel" role="tabpanel" aria-labelledby="scout-tab-missions">
+        <div class="scout-panel" id="scout-missions-panel" role="tabpanel" aria-labelledby="scout-tab-missions" hidden>
           <p class="scout-filter" id="scout-filter" hidden><span></span><button class="link-button" type="button">Ver todas</button></p>
           <ul class="scout-missions" id="scout-missions"></ul>
           <p class="modal-note">Uma missão nunca começa sozinha: leia a tarefa, ajuste no Novo agente e só então mande o aldeão. O que o batedor lê pode trazer instruções escondidas.</p>
         </div>
         <div class="scout-panel" id="scout-equipment-panel" role="tabpanel" aria-labelledby="scout-tab-equipment" hidden>
-          <h3 class="field-label scout-section-title">Conectores</h3>
-          <p class="modal-note">Ele lê pelos conectores da sua conta do Claude (claude.ai › Configurações › Conectores), só leitura: nunca envia, escreve nem apaga nada. As missões guardam um resumo técnico e o link, nunca as mensagens.</p>
-          <div class="scout-connectors" id="scout-connectors"></div>
-          <h3 class="field-label scout-section-title">Skills <small id="scout-skill-slots"></small></h3>
-          <p class="modal-note">As instruções da skill vão com ele e guiam como julga e escreve as missões. Mais espaços abrem com experiência: nível 3 e nível 5.</p>
-          <ul class="scout-skills" id="scout-skills"></ul>
-          <h3 class="field-label scout-section-title">Rotinas</h3>
-          <p class="modal-note">Rondas automáticas, também com o mapa na bandeja. Esperam enquanto o plano passa de 80%, e missão urgente vira notificação.</p>
-          <ul class="scout-routines" id="scout-routines"></ul>
+          <div class="ro-window">
+            <p class="ro-title">Equipamento</p>
+            <div class="ro-tabs" role="tablist" aria-label="Equipamento">
+              <button class="ro-tab" id="ro-tab-general" type="button" role="tab" aria-selected="true" aria-controls="ro-general">Geral</button>
+              <button class="ro-tab" id="ro-tab-bag" type="button" role="tab" aria-selected="false" aria-controls="ro-bag" tabindex="-1">Bolsa</button>
+            </div>
+            <div class="ro-general" id="ro-general" role="tabpanel" aria-labelledby="ro-tab-general">
+              <div class="ro-equip">
+                <ul class="ro-slots" id="ro-slots-left" aria-label="Lado esquerdo"></ul>
+                <canvas class="ro-hero" id="ro-hero" width="72" height="72" role="img" aria-label="O Batedor"></canvas>
+                <canvas class="ro-hero ro-hero-3d" id="ro-hero-3d" role="img" aria-label="O Batedor em 3D" hidden></canvas>
+                <ul class="ro-slots is-right" id="ro-slots-right" aria-label="Lado direito"></ul>
+              </div>
+              <p class="ro-status-title">Status</p>
+              <div class="ro-status" id="ro-status"></div>
+            </div>
+            <div class="ro-bag" id="ro-bag" role="tabpanel" aria-labelledby="ro-tab-bag" hidden></div>
+          </div>
+          <div class="ro-detail" id="ro-detail" aria-live="polite"></div>
           <div class="scout-equip-actions">
-            <button class="btn btn-ghost" id="scout-routine-add" type="button">+ Rotina</button>
+            <p class="modal-note" id="ro-dirty"></p>
             <button class="btn btn-primary" id="scout-equip-save" type="button">Salvar equipamento</button>
           </div>
+        </div>
+        <div class="scout-panel" id="scout-routines-panel" role="tabpanel" aria-labelledby="scout-tab-routines" hidden>
+          <p class="modal-note">Rondas que ele faz sozinho, com o mapa aberto ou na bandeja. O que achar vira missão; nada começa sem você.</p>
+          <ol class="flows" id="scout-flows"></ol>
+          <div class="scout-equip-actions">
+            <button class="btn btn-ghost" id="scout-flow-add" type="button">+ Nova rotina</button>
+            <button class="btn btn-primary" id="scout-flows-save" type="button">Salvar rotinas</button>
+          </div>
+        </div>
+        <div class="scout-panel" id="scout-abilities-panel" role="tabpanel" aria-labelledby="scout-tab-abilities" hidden>
+          <h3 class="ro-section">O que ele sabe fazer</h3>
+          <ul class="abilities" id="scout-abilities"></ul>
+          <h3 class="ro-section">Regras que ele segue em toda ronda</h3>
+          <ul class="scout-rules" id="scout-rules"></ul>
+          <details class="scout-prompt" id="scout-prompt">
+            <summary>Instruções completas: o texto exato que ele recebe na próxima ronda</summary>
+            <pre id="scout-prompt-text">Abrindo…</pre>
+          </details>
         </div>
         <div class="scout-panel" id="scout-journal-panel" role="tabpanel" aria-labelledby="scout-tab-journal" hidden>
           <p class="modal-note">Cada ronda, cada missão achada e cada missão que um aldeão levou rendem experiência. As levadas e as descartadas entram nas próximas rondas: é assim que ele aprende o que vale trazer.</p>
           <ul class="scout-journal" id="scout-journal"></ul>
         </div>
+      </div>
+    </section>
+    <div class="settings-backdrop" id="phone-backdrop" hidden></div>
+    <section class="modal phone" id="phone" role="dialog" aria-modal="true" aria-labelledby="phone-title" hidden>
+      <header class="settings-head">
+        <h2 id="phone-title">Celular</h2>
+        <button class="icon-button" id="phone-close" type="button" aria-label="Fechar">✕</button>
+      </header>
+      <div class="modal-body">
+        <label class="toggle">
+          <input type="checkbox" id="phone-toggle" role="switch" />
+          <span class="toggle-track" aria-hidden="true"></span>
+          <span class="toggle-text">
+            Comandar pelo celular
+            <small>Pelo navegador do celular: ver os agentes, aprovar ou negar pedidos, responder e colocar agentes para trabalhar.</small>
+          </span>
+        </label>
+        <p class="phone-error" id="phone-error" role="alert" hidden></p>
+        <div class="phone-pairing" id="phone-pairing" hidden>
+          <canvas class="phone-qr" id="phone-qr" role="img" aria-label="QR code com o link do celular"></canvas>
+          <div class="phone-pairing-text">
+            <fieldset class="phone-networks" id="phone-networks" hidden>
+              <legend class="field-label">Rede</legend>
+            </fieldset>
+            <ol class="phone-steps">
+              <li>Celular na mesma rede Wi-Fi deste computador, ou no Tailscale.</li>
+              <li>Aponte a câmera para o QR code.</li>
+              <li>A página abre já conectada. Dá para pôr na tela inicial.</li>
+            </ol>
+            <p class="phone-seen" id="phone-seen" aria-live="polite"></p>
+            <div class="phone-link-actions">
+              <button class="link-button" id="phone-copy" type="button">Copiar link</button>
+              <button class="link-button" id="phone-reset" type="button" title="O celular conectado para de funcionar até escanear o QR novo">Trocar o código</button>
+            </div>
+          </div>
+        </div>
+        <p class="modal-note">Só aparelhos da sua rede ou do Tailscale, e só com o código deste QR. Quem tiver o link comanda os agentes: não compartilhe. Na rede local a conexão não é criptografada; em Wi-Fi público, use só pelo Tailscale.</p>
+        <p class="modal-note" id="phone-port-note" hidden></p>
       </div>
     </section>
     <div class="tooltip" id="tooltip" role="tooltip" hidden></div>

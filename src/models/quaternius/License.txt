@@ -1,0 +1,7 @@
+Horse (white), from the Ultimate Animated Animal Pack by Quaternius (https://quaternius.com)
+Downloaded from Poly Pizza: https://poly.pizza/m/bEdE4rmZy9
+
+License: Creative Commons Zero (CC0 1.0)
+http://creativecommons.org/publicdomain/zero/1.0/
+
+Trimmed by scripts/trim-horse.mjs: four clips, the parts merged into one mesh painted from a palette.

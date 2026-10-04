@@ -6,6 +6,8 @@ import { ERAS, TOWN_STYLES, drawGrass, drawTownCenter } from './sprites.js';
 const compact = new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 });
 const whole = new Intl.NumberFormat('pt-BR');
 const monthYear = new Intl.DateTimeFormat('pt-BR', { month: 'short', year: 'numeric' });
+const usdWhole = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+const usdCents = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD' });
 
 // What each AoE resource counts in the empire.
 export const RESOURCES = [
@@ -15,6 +17,9 @@ export const RESOURCES = [
   { id: 'stone', name: 'Pedra', hint: 'arquivos rastreados pelo git' },
   { id: 'tokens', name: 'Tokens', hint: 'tokens de agente nos últimos 7 dias (entrada, saída e escrita de cache; leitura de cache fica de fora)' },
 ];
+
+// The two the empire leads with, on the map's bar and atop the overview: commits and tokens.
+export const HEADLINE_RESOURCES = RESOURCES.filter((resource) => resource.id === 'gold' || resource.id === 'tokens');
 
 // 9 x 9 pixel icons, drawn like the rest of the map.
 const ICONS = {
@@ -77,35 +82,45 @@ function svg(tag, attrs) {
   return node;
 }
 
-// The history's rows, each on its own scale over the same 30 days.
-const HISTORY_ROWS = [
-  { key: 'commits', resource: 'gold', label: 'Ouro · commits', color: '#f2c84b' },
-  { key: 'tokens', resource: 'tokens', label: 'Tokens', color: '#3b82f6' },
-];
-
-function describeDays(when, { commits, tokens }) {
-  return `${when}: ${whole.format(commits)} ${commits === 1 ? 'commit' : 'commits'} · ${formatResource('tokens', tokens)} tokens`;
+function formatUsd(value) {
+  return (Math.abs(value) >= 100 ? usdWhole : usdCents).format(value);
 }
 
-// 30 days of the empire, one column per day: commits (gold) and tokens, each row with its peak on
-// the right. Hovering a day reads its numbers under the chart; otherwise the line sums the 30 days.
-function historyChart(days) {
+// The history: commits per day. The tokens have their own chart, with their cost, atop the overview.
+const HISTORY = {
+  label: 'Commits por dia, últimos 30 dias',
+  rows: [{ key: 'commits', label: 'Ouro · commits', color: '#f2c84b', format: (value) => formatResource('gold', value) }],
+  describe: (when, { commits }) => `${when}: ${whole.format(commits)} ${commits === 1 ? 'commit' : 'commits'}`,
+};
+
+const SPEND = {
+  label: 'Tokens e custo em preço de API por dia, últimos 30 dias',
+  rows: [
+    { key: 'tokens', label: 'Tokens', color: '#3b82f6', format: (value) => formatResource('tokens', value) },
+    { key: 'costUsd', label: 'Custo em preço de API', color: '#5fae5a', format: formatUsd },
+  ],
+  describe: (when, { tokens, costUsd }) => `${when}: ${formatResource('tokens', tokens)} tokens · ${formatUsd(costUsd)} em preço de API`,
+};
+
+// 30 days of the empire, one column per day and one row per measure, each on its own scale with its
+// peak on the right. Hovering a day reads its numbers under the chart; otherwise the line sums the 30 days.
+function dailyChart(days, { label, rows, describe }) {
   const width = 600;
   const labelH = 14;
   const barsH = 36;
   const rowH = labelH + barsH + 10;
   const step = width / Math.max(1, days.length);
-  const height = rowH * HISTORY_ROWS.length + 6;
-  const chart = svg('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': 'Commits e tokens por dia, últimos 30 dias' });
+  const height = rowH * rows.length + 6;
+  const chart = svg('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': label });
   const text = (x, y, anchor, content) => {
     const node = svg('text', { x, y, 'text-anchor': anchor });
     node.textContent = content;
     return node;
   };
-  HISTORY_ROWS.forEach((row, r) => {
+  rows.forEach((row, r) => {
     const base = r * rowH + labelH + barsH;
-    const peak = Math.max(1, ...days.map((day) => day[row.key]));
-    chart.append(text(0, r * rowH + 10, 'start', row.label), text(width, r * rowH + 10, 'end', `pico ${formatResource(row.resource, peak)}/dia`));
+    const peak = Math.max(0, ...days.map((day) => day[row.key] ?? 0)) || 1;
+    chart.append(text(0, r * rowH + 10, 'start', row.label), text(width, r * rowH + 10, 'end', `pico ${row.format(peak)}/dia`));
     days.forEach((day, i) => {
       const barH = day[row.key] ? Math.max(1, Math.round((day[row.key] / peak) * barsH)) : 0;
       chart.append(svg('rect', { x: i * step, y: base - barH, width: step - 2, height: barH, fill: row.color, rx: 1 }));
@@ -115,16 +130,53 @@ function historyChart(days) {
   if (days.length > 0) chart.append(text(0, height, 'start', dayMonth.format(days[0].dayStart)), text(width, height, 'end', 'hoje'));
 
   const readout = el('p', 'overview-history-readout');
-  const sum = (key) => days.reduce((total, day) => total + day[key], 0);
-  const showTotal = () => (readout.textContent = describeDays(`${days.length} dias`, { commits: sum('commits'), tokens: sum('tokens') }));
+  const totals = Object.fromEntries(rows.map((row) => [row.key, days.reduce((total, day) => total + (day[row.key] ?? 0), 0)]));
+  const showTotal = () => (readout.textContent = describe(`${days.length} dias`, totals));
   days.forEach((day, i) => {
     const hit = svg('rect', { class: 'history-day', x: i * step - 1, y: 0, width: step, height: height - 12 });
-    hit.addEventListener('pointerenter', () => (readout.textContent = describeDays(dayMonth.format(day.dayStart), day)));
+    hit.addEventListener('pointerenter', () => (readout.textContent = describe(dayMonth.format(day.dayStart), day)));
     chart.append(hit);
   });
   chart.addEventListener('pointerleave', showTotal);
   showTotal();
   return [chart, readout];
+}
+
+function costTile(value, caption, hint) {
+  const tile = el('div', 'cost-tile');
+  if (hint) tile.title = hint;
+  tile.append(el('strong', null, value), el('small', null, caption));
+  return tile;
+}
+
+// What the last 30 days of tokens would have cost at API list prices, next to what the subscription
+// charges for a month: the difference is what the plan absorbs.
+function spendPanel(days, plan) {
+  const cost = days.reduce((total, day) => total + (day.costUsd ?? 0), 0);
+  const tiles = el('div', 'cost-tiles');
+  tiles.append(costTile(formatUsd(cost), 'em preço de API', 'Entrada, saída, escrita e leitura de cache, cada resposta pelo preço de lista do seu modelo'));
+  const parts = [tiles];
+  if (!plan) {
+    parts.push(el('p', 'modal-note', 'Plano não identificado (sem login no Claude Code, ou plano Team/Enterprise): sem comparação com a assinatura.'));
+  } else if (cost <= plan.monthlyUsd) {
+    tiles.append(costTile(`${formatUsd(plan.monthlyUsd)}/mês`, `assinatura ${plan.name}`), costTile(formatUsd(plan.monthlyUsd - cost), 'a assinatura custou a mais'));
+  } else {
+    const paidPercent = Math.min(99, Math.max(1, Math.round((plan.monthlyUsd / cost) * 100)));
+    tiles.append(
+      costTile(`${formatUsd(plan.monthlyUsd)}/mês`, `assinatura ${plan.name}`),
+      costTile(formatUsd(cost - plan.monthlyUsd), `subsidiados · ${whole.format(Math.round(cost / plan.monthlyUsd))}× o que você paga`),
+    );
+    const split = el('div', 'cost-split');
+    split.setAttribute('role', 'img');
+    split.setAttribute('aria-label', `Você paga ${paidPercent}% do que o uso custaria na API`);
+    const paid = el('span', 'cost-split-paid');
+    paid.style.width = `${paidPercent}%`;
+    split.append(paid, el('span', 'cost-split-subsidy'));
+    const legend = el('p', 'cost-split-legend');
+    legend.append(el('span', 'is-paid', `você paga ${paidPercent}%`), el('span', 'is-subsidy', `subsidiado ${100 - paidPercent}%`));
+    parts.push(split, legend);
+  }
+  return [...parts, ...dailyChart(days, SPEND)];
 }
 
 /**
@@ -136,6 +188,7 @@ export function createOverview({ getStats, designOf, isInEmpire, hasBase, onShow
   const backdrop = document.getElementById('overview-backdrop');
   const summary = document.getElementById('overview-summary');
   const totals = document.getElementById('overview-totals');
+  const spendEl = document.getElementById('overview-spend');
   const rows = document.getElementById('overview-bases');
   const fogNote = document.getElementById('overview-fog-note');
   const fogList = document.getElementById('overview-fog');
@@ -205,6 +258,7 @@ export function createOverview({ getStats, designOf, isInEmpire, hasBase, onShow
     if (!stats) {
       summary.textContent = 'Contando o império (git e horas de agente)…';
       totals.replaceChildren();
+      spendEl.replaceChildren();
       rows.replaceChildren();
       fogList.replaceChildren();
       fogNote.textContent = '';
@@ -222,13 +276,14 @@ export function createOverview({ getStats, designOf, isInEmpire, hasBase, onShow
     ].filter(Boolean).join(' · ');
     const sum = sumResources(empire);
     totals.replaceChildren(
-      ...RESOURCES.map((resource) => {
+      ...HEADLINE_RESOURCES.map((resource) => {
         const item = el('span', 'overview-total');
         item.title = `${resource.name}: ${resource.hint}`;
         item.append(resourceIcon(resource.id), el('strong', null, formatResource(resource.id, sum[resource.id])), el('small', null, resource.name));
         return item;
       }),
     );
+    spendEl.replaceChildren(...spendPanel(stats.days ?? [], stats.plan ?? null));
     rows.replaceChildren(...empire.map(baseRow));
     renderProgress(stats);
     fogNote.textContent = fog.length
@@ -261,7 +316,7 @@ export function createOverview({ getStats, designOf, isInEmpire, hasBase, onShow
         return badge;
       }),
     );
-    historyEl.replaceChildren(...historyChart(stats.days ?? []));
+    historyEl.replaceChildren(...dailyChart(stats.days ?? [], HISTORY));
     const events = getEvents().slice(0, 12);
     eventsEl.replaceChildren(
       ...(events.length

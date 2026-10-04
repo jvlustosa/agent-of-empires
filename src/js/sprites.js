@@ -100,6 +100,7 @@ export function spinnerFrame(t) {
 
 const ICONS = {
   terminal: ['#....', '.#...', '..#..', '.#...', '#.###'],
+  git: ['#...#', '#...#', '.###.', '..#..', '..#..'], // a fork: two lines joining into one
   coding: ['...##', '..###', '.###.', '###..', '##...'],
   reading: ['.###.', '#...#', '#...#', '.###.', '....#'],
   web: ['.###.', '#.#.#', '#####', '#.#.#', '.###.'],
@@ -1063,6 +1064,16 @@ const FORM_SHAPES = {
   5: { w: -6, h: 2, roof: 2 },
 };
 const MIN_BODY_W = 22; // a window each side of the door
+// On grown land (design.growth, from plot.js: k 0 › 1) the town center grows with it, by these
+// fractions at k = 1: taller walls and roof (the towers follow), a second row of windows past half
+// again its height, and a wider body only while it spans no more than the imperial one with its
+// towers, so the bell and the builders at its wall stay clear.
+const GROW_2D = { w: 0.3, h: 0.6, roof: 0.4 };
+const MAX_TOWN_SPAN = 48;
+// A half-lot core's town center (design.growth.isSmall) stands at this fraction, spanning no more
+// than SMALL_TOWN_SPAN with its towers, so its little mine and forge stay clear.
+const SMALL_TOWN = 0.8;
+const SMALL_TOWN_SPAN = 34;
 
 const STYLE_ART = {
   prontera: { wall: C.stone, light: C.stoneLight, dark: C.stoneDark, trim: C.woodDark, texture: 'stone' },
@@ -1082,18 +1093,30 @@ export function formFor(project) {
   return pick(FORMS, hashString(project) >>> 11).id;
 }
 
-// The era's body stretched by the form. windowY is how high above the ground the windows start.
+// The era's body stretched by the form and grown with the land. windowY is how high above the
+// ground the windows start; lift is how much taller the land made it.
 function townShape(design) {
   const index = Math.min(ERA_SHAPES.length - 1, Math.max(0, Math.round(Number(design.era) || DEFAULT_TOWN.era) - 1));
   const base = ERA_SHAPES[index];
   const form = FORM_SHAPES[design.form] ?? FORM_SHAPES[DEFAULT_TOWN.form];
   const isHut = index === 0;
-  const bodyW = Math.max(MIN_BODY_W, base.bodyW + form.w);
-  const bodyH = base.bodyH + form.h;
-  const windowDx = Math.min(Math.max(base.windowDx + Math.round(form.w / 3), isHut ? 7 : 8), Math.floor(bodyW / 2) - 4);
+  const { k = 0, isSmall = false } = design.growth ?? {};
+  const shrink = (value) => (isSmall ? Math.round(value * SMALL_TOWN) : value);
+  const span = (isSmall ? SMALL_TOWN_SPAN : MAX_TOWN_SPAN) - (base.towerH ? 12 : 2);
+  const formW = Math.max(MIN_BODY_W, Math.min(Math.round(shrink(base.bodyW + form.w) / 2) * 2, span));
+  const grownW = Math.max(0, Math.min(Math.round((formW * k * GROW_2D.w) / 2) * 2, span - formW));
+  const formH = shrink(base.bodyH + form.h);
+  const formRoof = shrink(base.roofH + form.roof);
+  const grownH = Math.round(formH * k * GROW_2D.h);
+  const grownRoof = Math.round(formRoof * k * GROW_2D.roof);
+  const bodyW = formW + grownW;
+  const bodyH = formH + grownH;
+  const windowDx = Math.min(Math.max(base.windowDx + Math.round(form.w / 3) + Math.round(grownW / 3), isHut ? 7 : 8), Math.floor(bodyW / 2) - 4);
   const windowY = Math.min(isHut ? 10 : 12, bodyH - 2);
-  const upperY = form.isTall && windowY + 7 < bodyH ? windowY + 7 : 0;
-  return { ...base, era: index + 1, bodyW, bodyH, roofH: base.roofH + form.roof, windowDx, windowY, upperY };
+  const isTall = form.isTall || bodyH > shrink(base.bodyH) * 1.5;
+  const upperY = isTall && windowY + 7 < bodyH ? windowY + 7 : 0;
+  const towerH = base.towerH && shrink(base.towerH) + grownH + grownRoof;
+  return { ...base, era: index + 1, bodyW, bodyH, roofH: formRoof + grownRoof, towerH, windowDx, windowY, upperY, lift: grownH + grownRoof };
 }
 
 function townArt(style) {
@@ -1104,6 +1127,11 @@ function townArt(style) {
 export function townCenterHeight(design = DEFAULT_TOWN) {
   const shape = townShape(design);
   return shape.bodyH + shape.roofH;
+}
+
+/** How much taller than its 40 x 36 box a town center stands on grown land. */
+export function townCenterLift(design = DEFAULT_TOWN) {
+  return townShape(design).lift;
 }
 
 /** Window lights of a town center, relative to its 40 x 36 box, for the night glow. */
@@ -1137,7 +1165,7 @@ export function drawTownCenter(ctx, ox, oy, team, isNight, rise = 1, design = DE
   ctx.save();
   if (rise < 1) {
     // being founded: rises from the ground
-    const shown = Math.max(1, Math.round((36 + TOWN_REACH_UP) * rise));
+    const shown = Math.max(1, Math.round((36 + TOWN_REACH_UP + shape.lift) * rise));
     ctx.beginPath();
     ctx.rect(ox - TOWN_REACH_SIDE - 2, gy - shown, 40 + 2 * TOWN_REACH_SIDE + 4, shown + 2);
     ctx.clip();
@@ -1861,6 +1889,111 @@ export function drawForge(ctx, ox, oy, t, isActive) {
   if (isActive && Math.floor(t * 6) % 2) rect(ctx, ox + 21, oy + 15, 2, 1, C.fireHot);
 }
 
+/** A half-lot base's little mine, 14 x 13 at (ox, oy): a rock with its timbered mouth and gold. */
+export function drawSmallMine(ctx, ox, oy, t, isActive) {
+  rect(ctx, ox, oy + 12, 14, 2, C.shadow);
+  rect(ctx, ox + 3, oy + 1, 8, 4, C.rock);
+  rect(ctx, ox + 1, oy + 4, 12, 4, C.rock);
+  rect(ctx, ox, oy + 7, 14, 6, C.rockDark);
+  rect(ctx, ox + 3, oy + 1, 3, 1, C.rockLight);
+  rect(ctx, ox + 5, oy + 6, 4, 7, '#1a1410');
+  rect(ctx, ox + 4, oy + 5, 1, 8, C.wood);
+  rect(ctx, ox + 9, oy + 5, 1, 8, C.wood);
+  rect(ctx, ox + 4, oy + 5, 6, 1, C.woodLight);
+  [[2, 6], [11, 8], [8, 2]].forEach(([vx, vy], i) => {
+    rect(ctx, ox + vx, oy + vy, 1, 1, C.gold);
+    if (Math.floor(t * (isActive ? 3 : 1) + i * 1.7) % 6 === 0) rect(ctx, ox + vx, oy + vy - 1, 1, 1, C.goldGlint);
+  });
+  rect(ctx, ox + 10, oy + 11, 3, 2, C.gold);
+}
+
+/** A half-lot base's little forge, 14 x 15 at (ox, oy): a furnace under a lean-to and an anvil. */
+export function drawSmallForge(ctx, ox, oy, t, isActive) {
+  rect(ctx, ox, oy + 14, 14, 2, C.shadow);
+  rect(ctx, ox + 1, oy + 5, 7, 9, C.stoneDark);
+  rect(ctx, ox + 1, oy + 5, 7, 1, C.stone);
+  rect(ctx, ox + 3, oy - 1, 3, 6, C.stoneDark);
+  rect(ctx, ox, oy + 3, 14, 2, C.wood);
+  rect(ctx, ox, oy + 3, 14, 1, C.woodLight);
+  rect(ctx, ox + 13, oy + 5, 1, 9, C.woodDark);
+  const flicker = Math.floor(t * (isActive ? 10 : 4)) % 3;
+  rect(ctx, ox + 3, oy + 9, 3, 4, '#2a1410');
+  rect(ctx, ox + 3, oy + 10 - (flicker === 1 ? 1 : 0), 3, 3, isActive ? C.fire : '#9a3412');
+  for (let i = 0; i < 2; i++) {
+    const rise = (t * (isActive ? 9 : 4) + i * 5) % 10;
+    rect(ctx, ox + 4, oy - 3 - Math.floor(rise), 1, 1, `rgba(200, 200, 200, ${0.5 - rise / 25})`);
+  }
+  rect(ctx, ox + 9, oy + 10, 4, 1, '#5d6372');
+  rect(ctx, ox + 10, oy + 11, 2, 3, '#2a2e37');
+}
+
+/** A half-lot base's bench for those who wait on you, w wide, its foot at (x, y). */
+export function drawBench(ctx, x, y, w) {
+  rect(ctx, x, y, w, 1, C.shadow);
+  rect(ctx, x + 1, y - 3, 1, 3, C.woodDark);
+  rect(ctx, x + w - 2, y - 3, 1, 3, C.woodDark);
+  rect(ctx, x, y - 4, w, 2, C.wood);
+  rect(ctx, x, y - 4, w, 1, C.woodLight);
+}
+
+/** A village pond on its footprint at (x, y), flat on the ground, a ripple drifting across. */
+export function drawPond(ctx, x, y, w, h, seed, t) {
+  rect(ctx, x + 2, y - 1, w - 4, h + 2, C.grassLight);
+  rect(ctx, x - 1, y + 2, w + 2, h - 4, C.grassLight);
+  rect(ctx, x + 2, y, w - 4, h, C.water);
+  rect(ctx, x, y + 2, w, h - 4, C.water);
+  rect(ctx, x + 3, y + 1, w - 6, 1, '#2f5d8c');
+  rect(ctx, x + 3 + (Math.floor(t * 1.5 + (seed % 7)) % Math.max(1, w - 9)), y + Math.floor(h / 2), 3, 1, C.waterLight);
+}
+
+/**
+ * What else the village grew, on its footprint at (x, y), standing on its front edge: a haystack, a
+ * woodpile, a market stall in the team's stripes or a windmill turning its sails.
+ */
+export function drawPlotProp(ctx, x, y, prop, team, t) {
+  const { w, h } = prop;
+  const gy = y + h; // the foot
+  rect(ctx, x, gy - 1, w, 2, C.shadow);
+  if (prop.kind === 'haystack') {
+    rect(ctx, x + 1, gy - 6, w - 2, 5, C.hay);
+    rect(ctx, x + 2, gy - 8, w - 4, 2, C.hay);
+    rect(ctx, x + 2, gy - 8, w - 4, 1, '#f0d78a');
+    rect(ctx, x + 1, gy - 2, w - 2, 1, '#b8963a');
+  } else if (prop.kind === 'woodpile') {
+    for (let row = 0; row < 2; row++) {
+      for (let lx = x + row * 2; lx + 3 <= x + w - row * 2; lx += 3) {
+        rect(ctx, lx, gy - 4 - row * 3, 3, 3, C.wood);
+        rect(ctx, lx + 1, gy - 3 - row * 3, 1, 1, C.woodLight);
+      }
+    }
+  } else if (prop.kind === 'stall') {
+    rect(ctx, x + 1, gy - 10, 1, 10, C.woodDark);
+    rect(ctx, x + w - 2, gy - 10, 1, 10, C.woodDark);
+    for (let i = 0; i < w; i += 3) rect(ctx, x + i, gy - 13, Math.min(3, w - i), 3, (i / 3) % 2 ? C.white : team[0]);
+    rect(ctx, x + 1, gy - 4, w - 2, 4, C.wood);
+    rect(ctx, x + 1, gy - 4, w - 2, 1, C.woodLight);
+    rect(ctx, x + 3, gy - 5, 2, 1, '#c0504d');
+    rect(ctx, x + 7, gy - 5, 2, 1, C.gold);
+  } else if (prop.kind === 'windmill') {
+    rect(ctx, x + 3, gy - 18, 6, 18, C.plaster);
+    rect(ctx, x + 2, gy - 6, 8, 6, C.plaster);
+    rect(ctx, x + 8, gy - 18, 1, 18, '#b8a47e');
+    rect(ctx, x + 5, gy - 5, 2, 5, C.doorDark);
+    rect(ctx, x + 2, gy - 21, 8, 3, team[0]);
+    rect(ctx, x + 4, gy - 23, 4, 2, team[0]);
+    // the sails turn in quarter steps: a plus, then a cross
+    const [hx, hy] = [x + 6, gy - 17];
+    const isCross = Math.floor(t * 2 + (prop.seed % 4)) % 2 === 1;
+    for (let k = 1; k <= 7; k++) {
+      for (const [dx, dy] of isCross ? [[1, 1], [-1, 1], [1, -1], [-1, -1]] : [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        rect(ctx, hx + dx * k, hy + dy * k, 1, 1, C.woodDark);
+        if (k > 2) rect(ctx, hx + dx * k + (isCross ? 0 : dy), hy + dy * k + dx, 1, 1, C.white); // the sail beside its arm
+      }
+    }
+    rect(ctx, hx - 1, hy - 1, 2, 2, C.woodDark);
+  }
+}
+
 // ---------- Wonders and the age-up beam ----------
 
 /** Wonder for a thousand commits: a stone obelisk with a gold tip. (x, y) is its foot. */
@@ -2134,4 +2267,133 @@ export function drawMissionScroll(ctx, x, y, t = 0) {
   rect(ctx, left + 2, top + 4, 4, 1, '#b08d4f');
   rect(ctx, left + 7, top + 4, 2, 2, '#c2262e');
   rect(ctx, left + 7, top + 6, 1, 1, '#8b1a20');
+}
+
+/**
+ * The hero's aura, always on: a gold glow and a ring on the ground, pulsing, with sparks going round
+ * and motes rising. At night (darkness 0 to 1) it is drawn again over the dark, glowing brighter.
+ */
+export function drawKnightAura(ctx, x, y, t, darkness = 0, scale = 1) {
+  const cx = Math.round(x);
+  const cy = Math.round(y);
+  const pulse = 0.5 + 0.5 * Math.sin(t * 3);
+  const [rx, ry] = [14 * scale, 5 * scale];
+  drawGlow(ctx, cx, cy - 8 * scale, (24 + darkness * 10) * scale, SLACK.yellow, 0.18 + 0.12 * pulse + darkness * 0.9);
+  ctx.save();
+  ctx.globalAlpha = 0.45 + 0.35 * pulse;
+  const points = 48 * scale;
+  for (let i = 0; i < points; i++) {
+    const angle = (i / points) * Math.PI * 2;
+    rect(ctx, cx + Math.round(Math.cos(angle) * rx), cy + Math.round(Math.sin(angle) * ry), 1, 1, SLACK.yellow);
+  }
+  ctx.globalAlpha = 1;
+  for (let k = 0; k < 3; k++) {
+    const angle = t * 1.6 + (k * Math.PI * 2) / 3;
+    rect(ctx, cx + Math.round(Math.cos(angle) * rx), cy + Math.round(Math.sin(angle) * ry), scale, scale, '#fff3b0');
+  }
+  for (let k = 0; k < 4; k++) {
+    const rise = (t * 0.6 + k / 4) % 1;
+    ctx.globalAlpha = 1 - rise;
+    rect(ctx, cx + Math.round(Math.cos(k * 1.7) * 11 * scale), cy - Math.round(rise * 20 * scale), 1, 1, SLACK.yellow);
+  }
+  ctx.restore();
+}
+
+// ---------- Outlines: pixel art that reads sharp on any ground ----------
+
+const OUTLINE = '#120c07';
+let outlineBuffers = null; // the sprite and its silhouette, reused frame after frame
+
+/**
+ * Draws a sprite with a 1 px dark outline around its silhouette. `box` ({ x, y, w, h }, integers) is
+ * where the sprite lands; draw(c, dx, dy) paints it into a buffer, shifted by (dx, dy).
+ */
+export function drawOutlined(ctx, box, draw, color = OUTLINE) {
+  const w = box.w + 2;
+  const h = box.h + 2;
+  outlineBuffers ??= [document.createElement('canvas'), document.createElement('canvas')];
+  for (const canvas of outlineBuffers) {
+    if (canvas.width !== w || canvas.height !== h) [canvas.width, canvas.height] = [w, h];
+    else canvas.getContext('2d').clearRect(0, 0, w, h);
+  }
+  const [sprite, edge] = outlineBuffers;
+  const spriteCtx = sprite.getContext('2d');
+  spriteCtx.imageSmoothingEnabled = false;
+  draw(spriteCtx, 1 - box.x, 1 - box.y);
+  const edgeCtx = edge.getContext('2d');
+  edgeCtx.globalCompositeOperation = 'source-over';
+  edgeCtx.drawImage(sprite, 0, 0);
+  edgeCtx.globalCompositeOperation = 'source-in';
+  edgeCtx.fillStyle = color;
+  edgeCtx.fillRect(0, 0, w, h);
+  edgeCtx.globalCompositeOperation = 'source-over';
+  for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) ctx.drawImage(edge, box.x - 1 + dx, box.y - 1 + dy);
+  ctx.drawImage(sprite, box.x - 1, box.y - 1);
+}
+
+/** The map's knight, outlined. */
+export function drawKnightOutlined(ctx, look, ax, ay, facing, isMoving, frame, t, level = 1) {
+  const x = Math.round(ax);
+  const y = Math.round(ay);
+  drawOutlined(ctx, { x: x - 13, y: y - 31, w: 26, h: 32 }, (c, dx, dy) => drawKnight(c, look, x + dx, y + dy, facing, isMoving, frame, t, level));
+}
+
+/**
+ * The scout at twice the detail, for its panel: the map sprite at 2x, then the finer pixels (glints,
+ * the eye slit glowing, rivets, the rein, mane strands, the hash on the tabard, the barding's gold
+ * diamonds), all outlined. Faces east; (ax, ay) is between the hooves, in its own pixels.
+ */
+export function drawKnightPortrait(ctx, look, ax, ay, t, level = 1) {
+  const x = Math.round(ax);
+  const y = Math.round(ay);
+  const armor = KNIGHT_ARMOR[knightTier(level)];
+  const mane = look.horse[2];
+  drawOutlined(ctx, { x: x - 26, y: y - 62, w: 52, h: 64 }, (c, dx, dy) => {
+    c.save();
+    c.translate(x + dx, y + dy);
+    c.scale(2, 2);
+    drawKnight(c, look, 0, 0, 'e', false, 0, t, level);
+    c.restore();
+    // columns and rows from the point between the hooves; a map pixel (col, row) is (2 col - 24, 2 row) here
+    const D = (col, row, w, h, color) => rect(c, x + dx + col, y + dy + row, w, h, color);
+    // helm: a glint, the eye slit thinner with a gold glow, breathing holes and a rivet
+    D(-4, -47, 2, 1, armor.light);
+    D(-4, -46, 1, 1, armor.light);
+    D(-2, -43, 6, 1, armor.base);
+    D(1, -44, 1, 1, SLACK.yellow);
+    D(1, -41, 1, 1, armor.shade);
+    D(3, -41, 1, 1, armor.shade);
+    D(-5, -41, 1, 1, armor.shade);
+    // plume strands
+    D(-3, -55, 1, 3, '#b8164a');
+    D(-2, -52, 1, 2, '#ff5c8a');
+    // shoulder, the hash on the tabard, the belt buckle, a knuckle
+    D(-5, -37, 2, 1, armor.light);
+    D(-2, -31, 1, 1, SLACK.blue);
+    D(-1, -31, 1, 1, SLACK.green);
+    D(-2, -30, 1, 1, SLACK.red);
+    D(-1, -30, 1, 1, SLACK.yellow);
+    D(-2, -26, 2, 2, '#fff3b0');
+    D(4, -32, 1, 1, armor.light);
+    // horse: eye glint, inner ear, cheek strap and the rein to the rider's hand, mane strands, a lit back
+    D(16, -34, 1, 1, '#ffffff');
+    D(14, -37, 1, 1, look.horse[1]);
+    D(13, -34, 1, 4, '#5e3c20');
+    D(5, -31, 8, 1, '#5e3c20');
+    for (const [col, row] of [[7, -33], [8, -29], [7, -25]]) D(col, row, 1, 2, '#4a4238');
+    D(8, -24, 6, 1, '#f3efe6');
+    D(6, -34, 1, 1, mane);
+    // barding: gold diamonds on the cloth
+    for (const col of [-13, -8, 3]) {
+      D(col, -20, 1, 1, SLACK.yellow);
+      D(col - 1, -19, 3, 1, SLACK.yellow);
+      D(col, -18, 1, 1, SLACK.yellow);
+    }
+    // lance: the steel tip shining, a lit edge along the shaft
+    D(11, -58, 1, 1, '#ffffff');
+    for (let i = 0; i < 12; i++) D(2 * (14 + Math.floor(i / 4)) - 24, 2 * (-16 - i), 1, 2, '#a8773f');
+    // shield: gold studs on the rim
+    D(-17, -33, 1, 1, '#c99a2e');
+    D(-6, -33, 1, 1, '#c99a2e');
+  });
 }
