@@ -10,6 +10,7 @@ mod music;
 mod notify;
 mod onboarding;
 mod projects;
+mod scout;
 mod sound;
 mod terminal;
 mod transcript;
@@ -35,6 +36,7 @@ const USAGE_EVENT: &str = "usage";
 // Every minute, so the bars follow the work (claude.ai use counts too, unseen by the transcripts).
 const USAGE_POLL_INTERVAL: Duration = Duration::from_secs(60);
 const LIMIT_RESET_EVENT: &str = "limit_reset";
+const MUSIC_TRACK_EVENT: &str = "music_track";
 const APP_NAME: &str = "Agent of Empires";
 // Argument Claude Code passes when running us as its PermissionRequest hook.
 const PERMISSION_HOOK_FLAG: &str = "--permission-hook";
@@ -163,6 +165,25 @@ fn set_music_volume(volume: f64, music: tauri::State<music::Music>) {
     music.set_volume(volume);
 }
 
+/// "lofi" (the default) or "town" (the Ragnarok-style themes).
+#[tauri::command]
+fn set_music_station(station: String, music: tauri::State<music::Music>) -> Result<(), String> {
+    let station = music::Station::parse(&station).ok_or_else(|| format!("Estação desconhecida: {station}"))?;
+    music.set_station(station);
+    Ok(())
+}
+
+#[tauri::command]
+fn skip_music_track(music: tauri::State<music::Music>) {
+    music.skip();
+}
+
+/// The song playing now; later ones arrive as `music_track` events.
+#[tauri::command]
+fn get_music_track(music: tauri::State<music::Music>) -> Option<&'static str> {
+    music.now_playing()
+}
+
 #[tauri::command]
 fn get_snapshot(latest: tauri::State<LatestSnapshot>) -> Option<Snapshot> {
     latest.0.lock().ok()?.clone()
@@ -208,6 +229,18 @@ fn get_auto_approve(approvals: tauri::State<Arc<Approvals>>) -> Option<i64> {
 #[tauri::command]
 async fn list_projects() -> Vec<projects::Project> {
     tauri::async_runtime::spawn_blocking(projects::list_projects).await.unwrap_or_default()
+}
+
+/// The chosen repository in the "Novo agente" gallery: README summary, stack, branch, last commit.
+#[tauri::command]
+async fn project_preview(path: String) -> Result<projects::Preview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        // Only folders we listed ourselves, as for deploy_agent.
+        let project = projects::list_projects().into_iter().find(|p| p.path == path).ok_or("Esse projeto não está na lista")?;
+        Ok(projects::preview(std::path::Path::new(&project.path)))
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 // The empire's numbers (git, agent hours and tokens per repository, the session's from the plan's
@@ -558,11 +591,15 @@ fn main() {
         .manage(PendingLimitReset::default())
         .manage(music::Music::default())
         .invoke_handler(tauri::generate_handler![
-            play_sound, set_music, set_music_volume, get_snapshot, refresh_snapshot, open_session, get_approvals, resolve_approval, set_auto_approve, get_auto_approve, list_projects, get_empire, deploy_agent, end_session, get_usage, refresh_usage,
+            play_sound, set_music, set_music_volume, set_music_station, skip_music_track, get_music_track, get_snapshot, refresh_snapshot, open_session, get_approvals, resolve_approval, set_auto_approve, get_auto_approve, list_projects, project_preview, get_empire, deploy_agent, end_session, get_usage, refresh_usage,
             get_hosted, send_to_agent, move_to_cursor, list_sessions, resume_session,
-            onboarding::get_config, onboarding::get_setup, onboarding::set_projects_root, onboarding::finish_setup, onboarding::set_usage_on])
+            onboarding::get_config, onboarding::get_setup, onboarding::set_projects_root, onboarding::finish_setup, onboarding::set_usage_on,
+            scout::get_scout, scout::list_scout_skills, scout::set_scout_equipment, scout::set_scout_village, scout::start_scout, scout::set_mission_status,
+            scout::open_mission_source])
         .setup(|app| {
-            onboarding::init(app.path().app_config_dir()?);
+            let config_dir = app.path().app_config_dir()?;
+            scout::init(&config_dir);
+            onboarding::init(config_dir);
             let handle = app.handle().clone();
             // Debug builds live in target/debug: registering them at login would go stale.
             if !cfg!(debug_assertions) {
@@ -583,8 +620,15 @@ fn main() {
             );
             app.manage(approvals);
             app.manage(hosted_agents);
+            let emitter = handle.clone();
+            app.state::<music::Music>().on_track(Box::new(move |title| {
+                if let Err(err) = emitter.emit(MUSIC_TRACK_EVENT, title) {
+                    eprintln!("[music] failed to emit: {err}");
+                }
+            }));
             build_tray(&handle)?;
             spawn_usage_watcher(handle.clone(), usage_rx);
+            scout::spawn_routines(handle.clone());
             spawn_session_watcher(handle, refresh_rx);
             Ok(())
         })

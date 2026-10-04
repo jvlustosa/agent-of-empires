@@ -1,12 +1,15 @@
 // "Personalizar base": the era a repository's town center stands in (how robust it looks, at
-// first suggested by the repository's size), its size and turn in the 3D view (at first from the
-// repository's size and age) and its style, one of the cities of Ragnarok Online.
-import { DEFAULT_TOWN, ERAS, SIZES, TEAM_COLORS, TOWN_STYLES, drawGrass, drawTownCenter, teamColor, teamShade } from './sprites.js';
+// first suggested by the repository's size), its size, free dimensions and turn in the 3D view (size
+// at first from the repository's size and age), its form (at first drawn by its name) and its style, one of the
+// cities of Ragnarok Online.
+import { DEFAULT_TOWN, DIMENSIONS, ERAS, FORMS, SIZES, TEAM_COLORS, TOWN_STYLES, drawGrass, drawTownCenter, teamColor, teamShade } from './sprites.js';
 
 const PREVIEW_FPS = 10;
 const AUTO_ERA = 'auto';
 const AUTO_SIZE = 'auto';
+const AUTO_FORM = 'auto';
 const ROTATIONS = [0, 1, 2, 3]; // quarter turns
+const STONE_WALLS = 'stone';
 
 function formatAge(days) {
   if (days < 30) return `${days} ${days === 1 ? 'dia' : 'dias'}`;
@@ -42,6 +45,10 @@ function sizeName(id) {
   return SIZES.find((size) => size.id === id)?.name ?? '';
 }
 
+function formName(id) {
+  return FORMS.find((form) => form.id === id)?.name ?? '';
+}
+
 // getPreview3d: the 3D map when it is on screen (it draws the castle as the map will), else null.
 export function createDesignDialog({ getDesign, onSave, getPreview3d = () => null }) {
   const dialog = document.getElementById('design');
@@ -51,7 +58,10 @@ export function createDesignDialog({ getDesign, onSave, getPreview3d = () => nul
   const preview3d = document.getElementById('design-preview-3d');
   const sizeList = document.getElementById('design-sizes');
   const sizeNote = document.getElementById('design-size-note');
+  const formList = document.getElementById('design-forms');
   const rotationList = document.getElementById('design-rotations');
+  const dimensionList = document.getElementById('design-dimensions');
+  const wallList = document.getElementById('design-walls');
   const caption = document.getElementById('design-caption');
   const eraList = document.getElementById('design-eras');
   const eraNote = document.getElementById('design-era-note');
@@ -65,6 +75,7 @@ export function createDesignDialog({ getDesign, onSave, getPreview3d = () => nul
   let autoTeam = null; // the color its name hashes to
   let suggestedEra = DEFAULT_TOWN.era;
   let suggestedSize = DEFAULT_TOWN.size;
+  let suggestedForm = DEFAULT_TOWN.form;
   let returnFocus = null;
   let timer = null;
 
@@ -78,8 +89,17 @@ export function createDesignDialog({ getDesign, onSave, getPreview3d = () => nul
     return value && value !== AUTO_SIZE ? Number(value) : null;
   }
 
+  function chosenForm() {
+    const value = dialog.querySelector('input[name="design-form"]:checked')?.value;
+    return value && value !== AUTO_FORM ? Number(value) : null;
+  }
+
   function chosenRotation() {
     return Number(dialog.querySelector('input[name="design-rotation"]:checked')?.value ?? 0);
+  }
+
+  function chosenStoneWalls() {
+    return dialog.querySelector('input[name="design-walls"]:checked')?.value === STONE_WALLS;
   }
 
   function chosenColor() {
@@ -91,8 +111,13 @@ export function createDesignDialog({ getDesign, onSave, getPreview3d = () => nul
     return dialog.querySelector('input[name="design-style"]:checked')?.value ?? DEFAULT_TOWN.style;
   }
 
+  // { width, depth, height } in percent of the form
+  function chosenDimensions() {
+    return Object.fromEntries(DIMENSIONS.map((dim) => [dim.id, Number(dialog.querySelector(`input[name="design-${dim.id}"]`)?.value ?? 100)]));
+  }
+
   function chosenDesign() {
-    return { era: chosenEra() ?? suggestedEra, size: chosenSize() ?? suggestedSize, rotation: chosenRotation(), style: chosenStyle() };
+    return { era: chosenEra() ?? suggestedEra, size: chosenSize() ?? suggestedSize, form: chosenForm() ?? suggestedForm, rotation: chosenRotation(), style: chosenStyle(), hasStoneWalls: chosenStoneWalls(), ...chosenDimensions() };
   }
 
   // The 40 x 36 town center box sits centered at the bottom, with room above for spires.
@@ -117,7 +142,7 @@ export function createDesignDialog({ getDesign, onSave, getPreview3d = () => nul
     team = color === null ? autoTeam : TEAM_COLORS[color];
     const design = chosenDesign();
     const style = TOWN_STYLES.find((s) => s.id === design.style);
-    caption.textContent = `${eraName(design.era)} · ${sizeName(design.size)} · ${style.name}`;
+    caption.textContent = `${eraName(design.era)} · ${sizeName(design.size)} · ${formName(design.form)} · ${style.name}`;
     styleNote.textContent = style.hint;
     for (const canvas of styleList.querySelectorAll('canvas')) drawTown(canvas, { era: design.era, style: canvas.dataset.style }, 0);
   }
@@ -165,8 +190,41 @@ export function createDesignDialog({ getDesign, onSave, getPreview3d = () => nul
     ].filter(Boolean);
     const basis = facts.length > 0 ? `Pelo tamanho e pela idade (${facts.join(', ')}): ${sizeName(design.suggestedSize)}.` : `Sem contagem do repositório ainda: ${sizeName(design.suggestedSize)}.`;
     sizeNote.textContent = `${basis} Tamanho e giro aparecem na vista 3D.`;
+    const forms = [{ value: AUTO_FORM, label: `Sorteado pelo nome (${formName(design.suggestedForm)})`, hint: 'O formato que o nome do repositório sorteia' }, ...FORMS.map((form) => ({ value: String(form.id), label: form.name, hint: form.hint }))];
+    pills(formList, 'Formato', 'design-form', forms, design.isFormAuto ? AUTO_FORM : String(design.form));
     const turns = ROTATIONS.map((turn) => ({ value: String(turn), label: `${turn * 90}°`, hint: turn === 0 ? 'Porta de frente para o pátio' : `Um giro de ${turn * 90}°` }));
     pills(rotationList, 'Giro (3D)', 'design-rotation', turns, String(design.rotation ?? 0));
+    const walls = [
+      { value: 'auto', label: 'Pela era', hint: 'Paliçada de madeira até Colonial, pedra da Fortaleza em diante' },
+      { value: STONE_WALLS, label: 'Pedra', hint: 'Muralha de pedra em qualquer era' },
+    ];
+    pills(wallList, 'Muralha', 'design-walls', walls, design.hasStoneWalls ? STONE_WALLS : 'auto');
+  }
+
+  // A slider per free dimension, its value beside it, and a way back to the form's proportions.
+  function renderDimensions(design) {
+    const reset = el('button', 'link-button', 'Voltar ao formato');
+    reset.type = 'button';
+    reset.addEventListener('click', () => {
+      for (const input of dimensionList.querySelectorAll('input[type="range"]')) input.value = '100';
+      dimensionList.dispatchEvent(new Event('input'));
+    });
+    const legend = el('legend', 'field-label', 'Dimensões (3D) · ');
+    legend.append(reset);
+    dimensionList.replaceChildren(
+      legend,
+      ...DIMENSIONS.map((dim) => {
+        const row = el('div', 'volume-setting design-dimension');
+        const input = el('input');
+        Object.assign(input, { type: 'range', id: `design-${dim.id}`, name: `design-${dim.id}`, min: dim.min, max: dim.max, step: 5, value: design[dim.id] ?? 100 });
+        const label = el('label', null, dim.name);
+        label.htmlFor = input.id;
+        const output = el('output', null, `${input.value}%`);
+        output.htmlFor = input.id;
+        row.append(label, input, output);
+        return row;
+      }),
+    );
   }
 
   function renderColors(design) {
@@ -207,10 +265,12 @@ export function createDesignDialog({ getDesign, onSave, getPreview3d = () => nul
     team = design.color === null ? autoTeam : TEAM_COLORS[design.color];
     suggestedEra = design.suggestedEra;
     suggestedSize = design.suggestedSize;
+    suggestedForm = design.suggestedForm;
     title.textContent = `Personalizar ${name}`;
     nicknameInput.value = design.nickname;
     renderEras(design);
     renderSizes(design);
+    renderDimensions(design);
     renderColors(design);
     renderStyles(design);
     renderNotes();
@@ -232,12 +292,17 @@ export function createDesignDialog({ getDesign, onSave, getPreview3d = () => nul
   }
 
   function save() {
-    onSave(project, { era: chosenEra(), size: chosenSize(), rotation: chosenRotation(), style: chosenStyle(), color: chosenColor(), nickname: nicknameInput.value });
+    onSave(project, { era: chosenEra(), size: chosenSize(), form: chosenForm(), rotation: chosenRotation(), style: chosenStyle(), color: chosenColor(), nickname: nicknameInput.value, hasStoneWalls: chosenStoneWalls(), ...chosenDimensions() });
     close();
   }
 
   dialog.addEventListener('change', () => {
     renderNotes();
+    renderPreview();
+  });
+  // the castle follows a dimension slider while it moves, not only once it is let go
+  dimensionList.addEventListener('input', () => {
+    for (const output of dimensionList.querySelectorAll('output')) output.textContent = `${output.previousElementSibling.value}%`;
     renderPreview();
   });
   dialog.addEventListener('keydown', (event) => {

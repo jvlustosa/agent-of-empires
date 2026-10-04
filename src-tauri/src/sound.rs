@@ -6,6 +6,7 @@ use std::f64::consts::TAU;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::thread;
 
@@ -201,7 +202,12 @@ pub(crate) fn rendered(name: &str, render: impl FnOnce() -> Vec<f64>) -> Result<
     }
     // Rendered without holding the lock: a song takes a moment, and an effect must not wait for it.
     fs::create_dir_all(path.parent().unwrap_or(&path)).map_err(|err| err.to_string())?;
-    fs::write(&path, wav_bytes(&render())).map_err(|err| format!("Não consegui gravar o som: {err}"))?;
+    // Written aside, then renamed in: songs skipped through fast can render the same file twice at
+    // once, and the player must never read one half rewritten.
+    static STAGED: AtomicUsize = AtomicUsize::new(0);
+    let staging = path.with_extension(format!("wav.{}", STAGED.fetch_add(1, Ordering::Relaxed)));
+    let saved = fs::write(&staging, wav_bytes(&render())).and_then(|()| fs::rename(&staging, &path));
+    saved.map_err(|err| format!("Não consegui gravar o som: {err}"))?;
     if let Ok(mut names) = WRITTEN.lock() {
         names.push(name.to_string());
     }

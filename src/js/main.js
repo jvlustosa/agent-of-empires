@@ -5,12 +5,13 @@ import { createDesignDialog } from './design.js';
 import { RESOURCES, createOverview, formatResource, resourceIcon, sumResources } from './overview.js';
 import { createActionMenu, icon } from './menu.js';
 import { PHASES, formatElapsed, isObserver, kindInfo, phaseOf } from './kinds.js';
-import { Empire, RECRUIT_CLOTH, WONDERS, mapClock } from './empire.js';
+import { Empire, KNIGHT_ID, RECRUIT_CLOTH, WONDERS, mapClock } from './empire.js';
+import { createScout } from './scout.js';
 import { createProgress } from './progress.js';
 import { createOnboarding } from './onboarding.js';
 import { createCampaign, createHelp } from './guide.js';
 import * as sfx from './sfx.js';
-import { ERAS, TOWN_STYLES, drawVillager, makeLook } from './sprites.js';
+import { ERAS, TEAM_COLORS, TOWN_STYLES, drawKeepIcon, drawVillager, makeLook } from './sprites.js';
 
 const ENTRYPOINT_LABELS = {
   'claude-vscode': 'VS Code',
@@ -31,6 +32,9 @@ const groupToggle = document.getElementById('group-toggle');
 const soundToggle = document.getElementById('sound-toggle');
 const musicToggle = document.getElementById('music-toggle');
 const musicVolumeInput = document.getElementById('music-volume');
+const musicStationSelect = document.getElementById('music-station');
+const musicNowEl = document.getElementById('music-now');
+const musicNextButton = document.getElementById('music-next');
 const approvalsEl = document.getElementById('approvals');
 const settingsEl = document.getElementById('settings');
 const settingsBackdrop = document.getElementById('settings-backdrop');
@@ -39,6 +43,8 @@ const GROUP_PREF_KEY = 'cpo.groupByProject';
 const SOUND_PREF_KEY = 'cpo.sound';
 const MUSIC_PREF_KEY = 'cpo.music';
 const MUSIC_VOLUME_KEY = 'cpo.musicVolume';
+const MUSIC_STATION_KEY = 'cpo.musicStation';
+const MUSIC_STATIONS = ['lofi', 'town'];
 const DEFAULT_MUSIC_VOLUME = 100;
 const DISMISSED_KEY = 'cpo.dismissed';
 const COLLAPSED_KEY = 'cpo.collapsedProjects';
@@ -51,6 +57,8 @@ const VIEW_ZOOM_KEY = 'cpo.viewZoom';
 // The map's view: { mode: 'top' | 'iso', rotation: 0..3 }.
 const MAP_VIEW_KEY = 'cpo.mapView';
 const MAP_ONLY_KEY = 'cpo.mapOnly';
+const PANEL_COLLAPSED_KEY = 'cpo.panelCollapsed';
+const PANEL_LEFT_KEY = 'cpo.panelLeft';
 // The saved view's format: v2 made the 3D isometric the default and replaced the pixel one.
 const MAP_VIEW_VERSION = 2;
 const VIEW_LABELS = { top: '2D', iso: 'ISO', '3d': '3D' };
@@ -60,6 +68,8 @@ const LAYOUT_KEY = 'cpo.empireLayout';
 const VIEW_ZOOM_BUTTON_STEP = 1.25;
 const WEEKDAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 const TOAST_MS = 3500;
+// Long enough to reach "Ver" when it pops up mid-task.
+const NEEDS_YOU_TOAST_MS = 10 * 1000;
 // The empire's numbers change slowly, but the balloons of the session's tokens should keep up; the
 // backend only rereads what changed (a few milliseconds).
 const EMPIRE_REFRESH_MS = 60 * 1000;
@@ -91,10 +101,14 @@ let empireStats = null; // { generatedAt, repos: [...] } from get_empire, null u
 const progress = createProgress();
 const campaign = createCampaign({ before: document.getElementById('approvals'), showToast: (message) => showToast(message) });
 
+// O Batedor's panel; created once the deploy dialog it trains villagers with exists.
+let scoutPanel = null;
+
 const empire = new Empire(document.getElementById('map'), document.getElementById('overlay'), {
   onHover: showTooltip,
-  onSelect: (id, point) => handleAgentClick(id, point),
-  onMenu: (id, anchor, opener) => openAgentMenu(id, anchor, opener),
+  onSelect: (id, point) => (id === KNIGHT_ID ? scoutPanel?.open() : handleAgentClick(id, point)),
+  onMenu: (id, anchor, opener) => (id === KNIGHT_ID ? scoutPanel?.open() : openAgentMenu(id, anchor, opener)),
+  onMissions: (project) => scoutPanel?.open({ project }),
   onProjectClick: (project, point) => {
     tooltipEl.hidden = true; // the card says it all; the hover tip would sit behind it
     baseCard.open(project, point);
@@ -113,7 +127,10 @@ const empire = new Empire(document.getElementById('map'), document.getElementByI
   onEvent: (event) => recordEmpireEvent(event),
   view: readMapView(),
   layout: readLayout(),
-  onLayoutChange: (layout) => saveLayout(layout),
+  onLayoutChange: (layout) => {
+    saveLayout(layout);
+    scoutPanel?.syncVillage();
+  },
 });
 
 const actionMenu = createActionMenu();
@@ -122,7 +139,8 @@ const deployDialog = createDeployDialog({
   invoke: (command, args) => window.__TAURI__.core.invoke(command, args),
   showToast: (message, isError) => showToast(message, isError),
   getAgents: () => agents,
-  getColor: (project) => projectColor(project),
+  getTeam: (project) => empire.teamOf(project),
+  getDesign: (project) => empire.designOf(project),
   onDeployed: ({ spot, project, hint }) => {
     empire.reserveLand(spot, project.name, hint);
     campaign.complete('train');
@@ -132,6 +150,16 @@ const deployDialog = createDeployDialog({
     showToast(`${project.name}: base fixa no mapa`);
   },
   openMenu: (anchor, title, items, opener) => actionMenu.open(anchor, title, items, opener),
+});
+
+scoutPanel = createScout({
+  invoke: (command, args) => window.__TAURI__.core.invoke(command, args),
+  showToast: (message, isError, action) => showToast(message, isError, action),
+  getBases: () => empire.baseProjects(),
+  displayName: (project) => empire.displayName(project),
+  // The task goes to the full dialog to be read and adjusted; only a started agent takes the mission.
+  onTrain: (mission, project) => deployDialog.open(null, mission.task, project, null, () => scoutPanel.taken(mission, project)),
+  onState: (scout) => empire.setScout(scout),
 });
 
 const designDialog = createDesignDialog({
@@ -287,6 +315,13 @@ window.addEventListener('keydown', (event) => {
   if (overview.isOpen()) overview.close();
   else overview.open();
 });
+window.addEventListener('keydown', (event) => {
+  const isTyping = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+  if (event.key.toLowerCase() !== 'k' || isTyping || event.ctrlKey || event.metaKey || event.altKey) return;
+  event.preventDefault();
+  if (scoutPanel.isOpen()) scoutPanel.close();
+  else scoutPanel.open();
+});
 
 function deployToRepo(project, text, mode) {
   const path = empire.repoPathOf(project);
@@ -351,6 +386,14 @@ const buildMenu = createBuildMenu({
     showToast(`Construir ${repo.name}: clique no mapa · Esc cancela`);
   },
 });
+
+// Construir and Recrutar wear pixel busts like the command chip's villager: one set, not two styles.
+function drawHudIcons() {
+  drawKeepIcon(document.getElementById('build-icon').getContext('2d'), 0, 0, ...TEAM_COLORS[0]);
+  const recruit = { ...makeLook('recruta', ''), ...RECRUIT_CLOTH, shirt: RECRUIT_CLOTH.tunic, hat: 1 };
+  drawVillager(document.getElementById('summon-icon').getContext('2d'), recruit, 6, 18, 's', 'stand', 0, 0);
+}
+drawHudIcons();
 
 // The token is over the map (not over the bar, a dialog or the panel).
 function isOverMap(event) {
@@ -1347,9 +1390,25 @@ function openBaseMenu(project, anchor) {
   const name = empire.displayName(project);
   const path = empire.repoPathOf(project);
   const waiting = empire.idleRecruitIds();
-  // Starting an agent in the terminal and renaming live in "Treinar aldeão" and "Personalizar", not here twice.
+  // Right-click trains at once: the task box comes focused, Enter starts it the usual way. Where it
+  // runs and several at once live in the town center's card ("Personalizar treino"), renaming in
+  // "Personalizar base", not here twice.
   const items = [
-    { icon: 'user-plus', label: 'Treinar aldeão', hint: 'Escreva a tarefa e escolha onde ele roda: aqui no app, no Cursor ou no terminal', onSelect: () => baseCard.open(project, anchor) },
+    {
+      field: {
+        label: 'Tarefa do novo aldeão',
+        placeholder: 'Treinar aldeão: a tarefa dele',
+        hint: 'Enter: abre uma aba do Claude no Cursor já com a tarefa',
+        submitLabel: 'Treinar',
+        onSubmit: (text) => deployToRepo(project, text, DEFAULT_DEPLOY_MODE),
+      },
+    },
+    {
+      icon: 'sliders',
+      label: 'Personalizar treino…',
+      hint: 'Onde ele roda (aqui no app, no Cursor ou no terminal) e vários aldeões de uma vez, cada um com a sua tarefa',
+      onSelect: () => baseCard.open(project, anchor),
+    },
   ];
   if (waiting.length > 0) {
     items.push({
@@ -1368,7 +1427,7 @@ function openBaseMenu(project, anchor) {
       submenu: sessionHistoryMenu(project, path),
     },
     { divider: true },
-    { icon: 'brush', label: 'Personalizar…', hint: 'Era, tamanho, giro, estilo da cidade, cor do time e nome no mapa', onSelect: () => designDialog.open(project) },
+    { icon: 'brush', label: 'Personalizar base…', hint: 'Era, tamanho, giro, estilo da cidade, cor do time e nome no mapa', onSelect: () => designDialog.open(project) },
     { icon: 'rotate', label: 'Girar castelo', hint: 'Um quarto de volta, na vista 3D', onSelect: () => empire.rotateDesign(project) },
     { icon: 'move', label: 'Mover base', hint: 'A base segue o ponteiro; clique onde ela fica. Esc cancela', onSelect: () => empire.startPlacing(project, path) },
     { icon: 'square-plus', label: 'Fundar base vizinha…', hint: 'Outro repositório colado a este, para juntar os que andam juntos', onSelect: () => deployDialog.open(empire.spotBeside(project)) },
@@ -1706,17 +1765,37 @@ function savePref(key, value) {
 function playTransitions(next) {
   const before = previousById;
   previousById = new Map(next.map((agent) => [agent.id, agent]));
-  if (!before || !isSoundOn) return; // first snapshot after (re)load is the baseline
+  if (!before) return; // first snapshot after (re)load is the baseline
   let hasFinished = false;
-  let needsYou = false;
+  const needsYou = [];
   for (const agent of next) {
     const previous = before.get(agent.id);
     if (!previous || isObserver(agent)) continue;
-    if (needsAttention(agent) && !needsAttention(previous)) needsYou = true;
+    if (needsAttention(agent) && !needsAttention(previous)) needsYou.push(agent);
     else if (previous.status === 'busy' && agent.status === 'idle') hasFinished = true;
   }
-  if (needsYou) sfx.playNeedsYou();
+  // The toast shows even with the sound off: it is how a muted map still tells you who is blocked.
+  if (needsYou.length) toastNeedsYou(needsYou);
+  if (!isSoundOn) return;
+  if (needsYou.length) sfx.playNeedsYou();
   else if (hasFinished) sfx.playFinished();
+}
+
+function toastNeedsYou(list) {
+  const [first] = list;
+  const message = list.length === 1 ? `${taskTitle(first)} precisa de você · ${first.activity.label}` : `${list.length} agentes precisam de você`;
+  showToast(message, false, { label: 'Ver', onClick: () => revealAgent(first.id) }, NEEDS_YOU_TOAST_MS);
+}
+
+// Same popover as a click on the card: it carries the approve / deny / answer buttons.
+function revealAgent(id) {
+  const card = listEl.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
+  if (!card?.offsetParent) {
+    openQuick(id, { x: window.innerWidth / 2, y: 56 }); // list hidden (map only): under the toast
+    return;
+  }
+  card.scrollIntoView({ block: 'nearest' });
+  openQuick(id, card);
 }
 
 function countByRank(list) {
@@ -1963,7 +2042,7 @@ function selectAgent(id) {
   listEl.querySelector(`[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
-function showToast(message, isError = false, action = null) {
+function showToast(message, isError = false, action = null, ms = TOAST_MS) {
   toastEl.replaceChildren(el('span', null, message));
   if (action) {
     const button = el('button', 'toast-action', action.label);
@@ -1979,7 +2058,7 @@ function showToast(message, isError = false, action = null) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     toastEl.hidden = true;
-  }, TOAST_MS);
+  }, ms);
 }
 
 async function openSession(id) {
@@ -2030,7 +2109,15 @@ function showTooltip(hit) {
       ...(name === hit.project ? [] : [['em', `pasta ${hit.project}`]]),
       ['span', statusSummary(members) || 'Nenhum aldeão agora'],
       ['span', spendSummary(hit.project)],
-      ['small', 'Clique: treinar um aldeão aqui (novo agente) · arraste: mudar a base de lugar · botão direito: renomear, personalizar, fixar ou ocultar'],
+      ['small', 'Clique: treinar aldeões aqui, um ou vários · arraste: mudar a base de lugar · botão direito: treinar na hora, personalizar, fixar ou ocultar'],
+    ]);
+    return;
+  }
+  if (hit?.id === KNIGHT_ID) {
+    placeTooltip(hit, [
+      ['strong', 'O Batedor'],
+      ['span', 'Lê o Slack, o Gmail e o Notion e traz missões para as bases'],
+      ['small', 'Clique: missões, equipamento e diário (tecla K) · arraste: pegar no colo'],
     ]);
     return;
   }
@@ -2468,6 +2555,38 @@ mapOnlyButton.addEventListener('click', () => setMapOnly(mapOnlyButton.getAttrib
 showMapView({ mode: empire.viewMode, rotation: empire.viewRotation });
 setMapOnly(readPref(MAP_ONLY_KEY, false));
 
+// The panel: collapsed to a rail (Ctrl+B or the » button) and on the right (default) or the left.
+// The arrows point where the panel goes: toward the window's edge to collapse, back out to reopen.
+const panelCollapseButton = document.getElementById('panel-collapse');
+const panelRail = document.getElementById('panel-rail');
+
+function setPanelCollapsed(isCollapsed, { shouldFocus = false } = {}) {
+  document.querySelector('.app').classList.toggle('is-panel-collapsed', isCollapsed);
+  savePref(PANEL_COLLAPSED_KEY, isCollapsed);
+  if (shouldFocus) (isCollapsed ? panelRail : panelCollapseButton).focus();
+}
+
+function setPanelLeft(isLeft) {
+  document.querySelector('.app').classList.toggle('is-panel-left', isLeft);
+  panelCollapseButton.textContent = isLeft ? '«' : '»';
+  document.getElementById('panel-rail-arrow').textContent = isLeft ? '»' : '«';
+  document.querySelector(`input[name="panel-side"][value="${isLeft ? 'left' : 'right'}"]`).checked = true;
+  savePref(PANEL_LEFT_KEY, isLeft);
+}
+
+panelCollapseButton.addEventListener('click', () => setPanelCollapsed(true, { shouldFocus: true }));
+panelRail.addEventListener('click', () => setPanelCollapsed(false, { shouldFocus: true }));
+document.querySelectorAll('input[name="panel-side"]').forEach((radio) => radio.addEventListener('change', () => setPanelLeft(radio.value === 'left')));
+window.addEventListener('keydown', (event) => {
+  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 'b') return;
+  event.preventDefault();
+  const isCollapsed = !document.querySelector('.app').classList.contains('is-panel-collapsed');
+  // Keep focus inside the panel only when it was there; from the map or a field, stay put.
+  setPanelCollapsed(isCollapsed, { shouldFocus: Boolean(document.activeElement?.closest('.panel')) });
+});
+setPanelLeft(readPref(PANEL_LEFT_KEY, false));
+setPanelCollapsed(readPref(PANEL_COLLAPSED_KEY, false));
+
 // As in the game: arrows / WASD pan, Space + drag pans, Q / E turn the isometric camera, V switches
 // the view. Only with the map in focus: never while typing, in a dialog or in the panel.
 function isMapKey(event) {
@@ -2497,6 +2616,9 @@ window.addEventListener('keydown', (event) => {
   } else if (key === 'f') {
     event.preventDefault();
     setMapOnly(mapOnlyButton.getAttribute('aria-pressed') !== 'true');
+  } else if (key === 'm') {
+    event.preventDefault();
+    skipMusicTrack();
   }
 });
 // Ctrl+A picks every villager; Esc first drops a base being built; B opens the build menu.
@@ -2564,9 +2686,48 @@ musicToggle.checked = isMusicOn;
 musicToggle.addEventListener('change', () => {
   isMusicOn = musicToggle.checked;
   savePref(MUSIC_PREF_KEY, isMusicOn);
-  musicVolumeInput.disabled = !isMusicOn;
+  applyMusicOn();
   sfx.setMusic(isMusicOn);
 });
+
+function applyMusicOn() {
+  musicVolumeInput.disabled = !isMusicOn;
+  musicStationSelect.disabled = !isMusicOn;
+  musicNextButton.disabled = !isMusicOn;
+  if (!isMusicOn) showMusicTrack(null);
+}
+
+/** The song playing, or "…" while the next one renders (about a second). */
+function showMusicTrack(title) {
+  musicNowEl.textContent = title ? `♪ ${title}` : '…';
+}
+
+function skipMusicTrack() {
+  if (!isMusicOn) return;
+  showMusicTrack(null);
+  sfx.skipMusicTrack();
+}
+
+function readMusicStation() {
+  try {
+    const stored = localStorage.getItem(MUSIC_STATION_KEY);
+    return MUSIC_STATIONS.includes(stored) ? stored : MUSIC_STATIONS[0];
+  } catch {
+    return MUSIC_STATIONS[0];
+  }
+}
+
+musicStationSelect.value = readMusicStation();
+musicStationSelect.addEventListener('change', () => {
+  showMusicTrack(null);
+  sfx.setMusicStation(musicStationSelect.value);
+  try {
+    localStorage.setItem(MUSIC_STATION_KEY, musicStationSelect.value);
+  } catch {
+    // the station still plays for this run
+  }
+});
+musicNextButton.addEventListener('click', skipMusicTrack);
 
 // Percent of the mix as written (the slider goes to 150).
 function readMusicVolume() {
@@ -2585,7 +2746,7 @@ function applyMusicVolume() {
 }
 
 musicVolumeInput.value = String(readMusicVolume());
-musicVolumeInput.disabled = !isMusicOn;
+applyMusicOn();
 musicVolumeInput.addEventListener('input', () => {
   applyMusicVolume();
   try {
@@ -2595,6 +2756,7 @@ musicVolumeInput.addEventListener('input', () => {
   }
 });
 applyMusicVolume(); // before the music starts, so the first notes already play at this level
+sfx.setMusicStation(musicStationSelect.value);
 sfx.setMusic(isMusicOn);
 sfx.unlockOnFirstGesture();
 document.getElementById('play-finished').addEventListener('click', () => sfx.playFinished());
@@ -2653,6 +2815,14 @@ async function start() {
   await tauri.event.listen('approvals', (event) => applyApprovals(event.payload));
   await tauri.event.listen('usage', (event) => applyUsage(event.payload));
   await tauri.event.listen('limit_reset', (event) => celebrateLimitReset(event.payload));
+  await tauri.event.listen('music_track', (event) => {
+    if (isMusicOn) showMusicTrack(event.payload);
+  });
+  // A reload (F5) finds the music already playing: its song started before this page.
+  tauri.core.invoke('get_music_track').then((title) => {
+    if (isMusicOn) showMusicTrack(title);
+  }).catch(() => {});
+  await tauri.event.listen('scout', (event) => scoutPanel.apply(event.payload));
   await tauri.event.listen('hosted', (event) => {
     hostedIds = new Set(event.payload ?? []);
     refreshView();
@@ -2673,6 +2843,8 @@ async function start() {
   autoApproveUntil = (await tauri.core.invoke('get_auto_approve')) ?? null;
   renderAutoApprove();
   applyUsage(await tauri.core.invoke('get_usage'));
+  scoutPanel.apply(await tauri.core.invoke('get_scout'));
+  scoutPanel.syncVillage();
   const config = await tauri.core.invoke('get_config');
   if (!config.onboardedAt) onboarding.open({ isFirst: true });
 }

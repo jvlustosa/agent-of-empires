@@ -111,6 +111,7 @@ export function createSummon({ preview, drop, cancel, click }) {
       drag.isDragging = true;
       drag.ghost = drag.token.cloneNode(true);
       drag.ghost.className = 'summon-ghost';
+      drag.ghost.querySelector('canvas')?.getContext('2d').drawImage(drag.token.querySelector('canvas'), 0, 0);
       document.body.append(drag.ghost);
     }
     drag.ghost.style.left = `${event.clientX}px`;

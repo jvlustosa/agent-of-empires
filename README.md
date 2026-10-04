@@ -22,6 +22,9 @@ for Linux, built with Tauri 2.
   task, and it opens in a prefilled Cursor tab by default; the app can also run `claude` itself or
   in your terminal. Select villagers and click another base to send them there, as in the game.
 - **Jump to a session**: clicking a villager brings up the editor window and tab that hosts it.
+- **Grow a base**: drag the edges of its land, up to three lots each way. The new land is
+  generated from the repository's name: a bailey walls in the land behind the town center (towers,
+  a keep, halls), and a village of houses, barns and fields fills the rest.
 - **An empire from real data**: commits are gold, lines added are wood, agent hours are food,
   tracked files are stone, and the tokens agents spent are blue crystals. Bases age up from
   Discovery to Imperial with the work done in them.
@@ -119,8 +122,11 @@ cargo test
 ```
 
 The backend is Rust in `src-tauri/src/`. The frontend is plain ES modules in `src/` with no build
-step; three.js is vendored in `src/vendor/three/`. Icons come from `scripts/gen-icon.py`. Feature
-documentation goes in [docs/MANUAL.pt-BR.md](docs/MANUAL.pt-BR.md).
+step; three.js is vendored in `src/vendor/three/`, with its glTF loader in `addons/` (the bare
+`'three'` import rewritten to a relative path, since the CSP rules out an inline import map).
+Ready-made 3D models live in `src/models/` and load through `src/js/models.js`. Icons come from
+`scripts/gen-icon.py`. Feature documentation goes in [docs/MANUAL.pt-BR.md](docs/MANUAL.pt-BR.md);
+the product plan in [docs/PRD.md](docs/PRD.md).
 
 ## Limitations
 
@@ -132,9 +138,17 @@ documentation goes in [docs/MANUAL.pt-BR.md](docs/MANUAL.pt-BR.md).
 ## License and credits
 
 MIT, see [LICENSE](LICENSE). Bundled: [three.js](https://threejs.org) (MIT,
-`src/vendor/three/LICENSE`) and the [Pixelify Sans](https://github.com/eifetx/Pixelify-Sans) font
-(SIL Open Font License, `src/fonts/OFL.txt`).
+`src/vendor/three/LICENSE`), the [Pixelify Sans](https://github.com/eifetx/Pixelify-Sans) font
+(SIL Open Font License, `src/fonts/OFL.txt`) and models from the
+[KayKit Medieval Hexagon Pack](https://kaylousberg.itch.io/kaykit-medieval-hexagon) by
+[Kay Lousberg](https://www.kaylousberg.com) (CC0, `src/models/kaykit/LICENSE.txt`), his
+[KayKit Adventurers](https://kaylousberg.itch.io/kaykit-adventurers) character pack (CC0,
+`src/models/kaykit-adventurers/LICENSE.txt`) and the
+[Fantasy Town Kit](https://kenney.nl/assets/fantasy-town-kit) by [Kenney](https://www.kenney.nl)
+(CC0, `src/models/kenney/License.txt`).
 
 Agent of Empires is a fan-made tribute. It is not affiliated with or endorsed by Microsoft (Age of
-Empires), Gravity (Ragnarok Online) or Anthropic. The sprites, buildings and music are original,
-drawn and composed in code.
+Empires), Gravity (Ragnarok Online) or Anthropic. The pixel-art sprites and the music are original,
+drawn and composed in code. In the 3D map, the gold mine, forge and pine trees are KayKit models,
+the villagers are KayKit Adventurers characters, and the town centers' walls and gabled roofs are
+built from Kenney's Fantasy Town Kit pieces.

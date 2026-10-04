@@ -24,9 +24,9 @@
           <button class="link-button" id="selection-clear" type="button">Limpar <kbd>Esc</kbd></button>
         </div>
         <div class="hud" id="hud" role="toolbar" aria-label="Barra do império">
-          <button class="hud-build" id="build-open" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Construir" title="Construir: escolha um repositório e clique no mapa para fundar a base dele (tecla B)"><svg viewBox="0 0 9 9" width="20" height="20" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="0" y="1" width="1" height="2"/><rect x="2" y="1" width="1" height="2"/><rect x="6" y="1" width="1" height="2"/><rect x="8" y="1" width="1" height="2"/><rect x="0" y="3" width="3" height="6"/><rect x="6" y="3" width="3" height="6"/><rect x="3" y="0" width="1" height="2"/><rect x="5" y="0" width="1" height="2"/><rect x="3" y="2" width="3" height="7"/></svg><kbd class="hud-key" aria-hidden="true">B</kbd></button>
+          <button class="hud-build" id="build-open" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Construir" title="Construir: escolha um repositório e clique no mapa para fundar a base dele (tecla B)"><canvas class="unit-portrait" id="build-icon" width="12" height="13" aria-hidden="true"></canvas><kbd class="hud-key" aria-hidden="true">B</kbd></button>
           <div class="hud-summon">
-            <button class="summon-token" type="button" draggable="false" data-mode="cursor" aria-label="Recrutar aldeão" title="Recrutar aldeão: clique e um recruta aparece na praça (ou arraste: no chão ele fica ali, numa base já começa lá). Selecione e clique numa base para pôr para trabalhar; ele abre no Cursor"><svg viewBox="0 0 9 9" width="20" height="20" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="2" y="0" width="5" height="1"/><rect x="1" y="1" width="7" height="1"/><rect x="3" y="2" width="3" height="2"/><rect x="2" y="4" width="5" height="3"/><rect x="2" y="7" width="2" height="2"/><rect x="5" y="7" width="2" height="2"/></svg></button>
+            <button class="summon-token" type="button" draggable="false" data-mode="cursor" aria-label="Recrutar aldeão" title="Recrutar aldeão: clique e um recruta aparece na praça (ou arraste: no chão ele fica ali, numa base já começa lá). Selecione e clique numa base para pôr para trabalhar; ele abre no Cursor"><canvas class="unit-portrait" id="summon-icon" width="12" height="13" aria-hidden="true"></canvas></button>
           </div>
           <form class="command-bar" id="command-bar" autocomplete="off">
             <select class="command-target" id="command-target" aria-label="Para quem" hidden></select>
@@ -48,6 +48,7 @@
           <button class="icon-button" id="map-only" type="button" aria-pressed="false" aria-label="Só o mapa" title="Só o mapa: esconde o comando e o painel (tecla F)">⛶</button>
           <button class="icon-button" id="view-rotate" type="button" aria-label="Girar a câmera" title="Girar a câmera (Q / E)" hidden>⟳</button>
           <button class="icon-button" id="overview-open" type="button" aria-label="Visão do império" title="Visão do império: todas as bases, recursos e a névoa (tecla I)"><svg viewBox="0 0 9 9" width="14" height="14" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="0" y="1" width="1" height="2"/><rect x="2" y="1" width="1" height="2"/><rect x="6" y="1" width="1" height="2"/><rect x="8" y="1" width="1" height="2"/><rect x="0" y="3" width="3" height="6"/><rect x="6" y="3" width="3" height="6"/><rect x="3" y="0" width="1" height="2"/><rect x="5" y="0" width="1" height="2"/><rect x="3" y="2" width="3" height="7"/></svg></button>
+          <button class="icon-button scout-open" id="scout-open" type="button" aria-haspopup="dialog" aria-label="O Batedor" title="O Batedor: missões que ele traz do Slack, Gmail e Notion, o equipamento e o diário (tecla K)"><canvas class="unit-portrait" id="scout-icon" width="9" height="11" aria-hidden="true"></canvas><span class="scout-badge" id="scout-badge" hidden></span></button>
           <button class="idle-button" id="idle-villager" type="button" aria-label="Ir para o próximo aldeão ocioso" title="Aldeão ocioso: vai para o próximo agente esperando você (tecla .)" disabled><svg viewBox="0 0 9 9" width="14" height="14" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="2" y="0" width="5" height="1"/><rect x="1" y="1" width="7" height="1"/><rect x="3" y="2" width="3" height="2"/><rect x="2" y="4" width="5" height="3"/><rect x="2" y="7" width="2" height="2"/><rect x="5" y="7" width="2" height="2"/></svg><span id="idle-count">0</span></button>
           <button class="icon-button" id="view-zoom-out" type="button" aria-label="Afastar o mapa">−</button>
           <output class="zoom-value" id="view-zoom-value" title="Rodinha sobre o mapa aproxima no ponteiro; Shift + rodinha anda para o lado">100%</output>
@@ -56,6 +57,7 @@
         </div>
       </div>
       <aside class="panel">
+        <button class="panel-rail" id="panel-rail" type="button" aria-label="Abrir o painel" title="Abrir o painel (Ctrl+B)"><span class="panel-rail-arrow" id="panel-rail-arrow" aria-hidden="true">«</span><span class="panel-rail-label" aria-hidden="true">Agentes</span></button>
         <header class="panel-head">
           <div class="panel-title">
             <h1>Agent of Empires</h1>
@@ -64,6 +66,7 @@
               <button class="icon-button" id="auto-approve-toggle" type="button" aria-pressed="false" aria-label="Aprovar tudo sozinho por 10 minutos" title="Aprovar tudo sozinho por 10 min: cada pedido de permissão é aprovado na hora. Perguntas e planos continuam com você."><svg viewBox="0 0 9 9" width="14" height="14" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="4" y="0" width="3" height="1"/><rect x="3" y="1" width="3" height="1"/><rect x="2" y="2" width="3" height="1"/><rect x="1" y="3" width="7" height="1"/><rect x="4" y="4" width="3" height="1"/><rect x="3" y="5" width="3" height="1"/><rect x="3" y="6" width="2" height="1"/><rect x="2" y="7" width="2" height="1"/><rect x="2" y="8" width="1" height="1"/></svg></button>
               <button class="icon-button" id="refresh" type="button" aria-label="Atualizar" title="Atualizar: relê todas as sessões e recarrega a tela (F5)">⟳</button>
               <button class="icon-button" id="settings-open" type="button" aria-label="Configurações" aria-expanded="false" aria-controls="settings"><svg viewBox="0 0 9 9" width="14" height="14" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="3" y="0" width="3" height="1"/><rect x="1" y="1" width="7" height="1"/><rect x="0" y="3" width="1" height="3"/><rect x="8" y="3" width="1" height="3"/><rect x="1" y="2" width="2" height="5"/><rect x="6" y="2" width="2" height="5"/><rect x="3" y="2" width="3" height="1"/><rect x="3" y="6" width="3" height="1"/><rect x="1" y="7" width="7" height="1"/><rect x="3" y="8" width="3" height="1"/></svg></button>
+              <button class="icon-button" id="panel-collapse" type="button" aria-label="Recolher o painel" title="Recolher o painel (Ctrl+B). O lado fica em Configurações">»</button>
             </div>
           </div>
           <p class="counts" id="counts">Procurando sessões…</p>
@@ -103,6 +106,17 @@
             <label class="deploy-mode">
               <input type="radio" name="map-view" value="3d" />
               <span><strong>3D isométrico (padrão)</strong><small>Mundo em 3D na diagonal, estilo Ragnarok e Age of Empires: relevo, sol e sombras, prédios e aldeões em 3D.</small></span>
+            </label>
+          </fieldset>
+          <fieldset class="deploy-modes view-setting">
+            <legend class="toggle-text">Lado do painel <small>Ctrl+B recolhe e reabre o painel.</small></legend>
+            <label class="deploy-mode">
+              <input type="radio" name="panel-side" value="right" />
+              <span><strong>À direita (padrão)</strong><small>A lista de agentes fica à direita do mapa.</small></span>
+            </label>
+            <label class="deploy-mode">
+              <input type="radio" name="panel-side" value="left" />
+              <span><strong>À esquerda</strong><small>A lista de agentes fica à esquerda do mapa.</small></span>
             </label>
           </fieldset>
           <div class="zoom-setting">
@@ -154,13 +168,24 @@
             <span class="toggle-track" aria-hidden="true"></span>
             <span class="toggle-text">
               Trilha sonora
-              <small>Temas originais no clima de Ragnarok Online, um por cidade: Prontera, Geffen, Payon, Morroc e Aldebaran. Pausa com a janela na bandeja.</small>
+              <small>Lo-fi para trabalhar, ou os temas da vila no clima de Ragnarok Online. Tudo original. Pausa com a janela na bandeja.</small>
             </span>
           </label>
+          <div class="volume-setting">
+            <label for="music-station">Estilo</label>
+            <select class="music-station" id="music-station">
+              <option value="lofi">Lo-fi</option>
+              <option value="town">Temas da vila</option>
+            </select>
+          </div>
           <div class="volume-setting">
             <label for="music-volume">Volume</label>
             <input type="range" id="music-volume" min="0" max="150" step="5" />
             <output id="music-volume-value" for="music-volume">100%</output>
+          </div>
+          <div class="volume-setting now-playing">
+            <span class="now-playing-title" id="music-now" aria-live="polite">…</span>
+            <button class="link-button" id="music-next" type="button" title="Próxima música (tecla M)">Próxima ⏭</button>
           </div>
         </section>
         <section class="settings-group" aria-labelledby="bases-title">
@@ -183,11 +208,13 @@
       </header>
       <div class="modal-body">
         <label class="field-label" for="deploy-search"><span class="step" aria-hidden="true">1</span>Projeto</label>
-        <div class="project-picker">
-          <input class="field" id="deploy-search" type="search" placeholder="Buscar repositório em ~/Code…" autocomplete="off" spellcheck="false" aria-controls="deploy-projects" />
-          <ul class="project-list" id="deploy-projects" role="listbox" aria-label="Repositórios"></ul>
+        <div class="project-browser">
+          <div class="project-picker">
+            <input class="field" id="deploy-search" type="search" placeholder="Buscar repositório em ~/Code…" autocomplete="off" spellcheck="false" aria-controls="deploy-projects" />
+            <ul class="project-gallery" id="deploy-projects" role="listbox" aria-label="Repositórios"></ul>
+          </div>
+          <aside class="project-preview" id="deploy-preview" aria-label="Prévia do projeto escolhido"></aside>
         </div>
-        <p class="deploy-chosen" id="deploy-chosen"></p>
         <label class="field-label" for="deploy-task"><span class="step" aria-hidden="true">2</span>O que o agente deve fazer?</label>
         <textarea class="field" id="deploy-task" rows="4" placeholder="Ex.: revisar o PR #32 e listar os riscos antes do merge"></textarea>
         <fieldset class="deploy-modes" aria-describedby="deploy-mode-hint">
@@ -274,7 +301,11 @@
             <p class="modal-note" id="design-era-note"></p>
             <fieldset class="design-eras" id="design-sizes"></fieldset>
             <p class="modal-note" id="design-size-note"></p>
+            <fieldset class="design-eras" id="design-forms"></fieldset>
             <fieldset class="design-eras" id="design-rotations"></fieldset>
+            <fieldset class="design-eras" id="design-walls"></fieldset>
+            <fieldset class="design-eras" id="design-dimensions"></fieldset>
+            <p class="modal-note">Em % do formato, na vista 3D. Largura e profundidade param onde o castelo encostaria na mina, na forja ou nos aldeões.</p>
             <fieldset class="design-colors" id="design-colors"></fieldset>
             <label class="field-label" for="design-nickname">Apelido no mapa</label>
             <input class="field" id="design-nickname" type="text" maxlength="24" spellcheck="false" placeholder="Ex.: Backend" />
@@ -317,6 +348,54 @@
         <p class="modal-note overview-usage" id="overview-usage"></p>
       </div>
     </section>
+    <div class="settings-backdrop" id="scout-backdrop" hidden></div>
+    <section class="modal scout" id="scout" role="dialog" aria-modal="true" aria-labelledby="scout-title" hidden>
+      <header class="settings-head">
+        <h2 id="scout-title">O Batedor</h2>
+        <button class="icon-button" id="scout-close" type="button" aria-label="Fechar">✕</button>
+      </header>
+      <div class="modal-body">
+        <div class="scout-hero">
+          <canvas class="scout-portrait" id="scout-portrait" width="32" height="34" role="img" aria-label="O Batedor, a cavalo"></canvas>
+          <div class="scout-hero-text">
+            <p class="scout-rank" id="scout-rank"></p>
+            <div class="scout-xp" id="scout-xp" role="meter" aria-label="Experiência" aria-valuemin="0"><span></span></div>
+            <small class="scout-xp-text" id="scout-xp-text"></small>
+            <p class="scout-status" id="scout-status" aria-live="polite"></p>
+          </div>
+          <button class="btn btn-primary" id="scout-send" type="button">Enviar batedor</button>
+        </div>
+        <div class="scout-tabs" role="tablist" aria-label="O Batedor">
+          <button class="scout-tab" id="scout-tab-missions" type="button" role="tab" aria-selected="true" aria-controls="scout-missions-panel">Missões <span class="scout-tab-count" id="scout-missions-count"></span></button>
+          <button class="scout-tab" id="scout-tab-equipment" type="button" role="tab" aria-selected="false" aria-controls="scout-equipment-panel" tabindex="-1">Equipamento</button>
+          <button class="scout-tab" id="scout-tab-journal" type="button" role="tab" aria-selected="false" aria-controls="scout-journal-panel" tabindex="-1">Diário</button>
+        </div>
+        <div class="scout-panel" id="scout-missions-panel" role="tabpanel" aria-labelledby="scout-tab-missions">
+          <p class="scout-filter" id="scout-filter" hidden><span></span><button class="link-button" type="button">Ver todas</button></p>
+          <ul class="scout-missions" id="scout-missions"></ul>
+          <p class="modal-note">Uma missão nunca começa sozinha: leia a tarefa, ajuste no Novo agente e só então mande o aldeão. O que o batedor lê pode trazer instruções escondidas.</p>
+        </div>
+        <div class="scout-panel" id="scout-equipment-panel" role="tabpanel" aria-labelledby="scout-tab-equipment" hidden>
+          <h3 class="field-label scout-section-title">Conectores</h3>
+          <p class="modal-note">Ele lê pelos conectores da sua conta do Claude (claude.ai › Configurações › Conectores), só leitura: nunca envia, escreve nem apaga nada. As missões guardam um resumo técnico e o link, nunca as mensagens.</p>
+          <div class="scout-connectors" id="scout-connectors"></div>
+          <h3 class="field-label scout-section-title">Skills <small id="scout-skill-slots"></small></h3>
+          <p class="modal-note">As instruções da skill vão com ele e guiam como julga e escreve as missões. Mais espaços abrem com experiência: nível 3 e nível 5.</p>
+          <ul class="scout-skills" id="scout-skills"></ul>
+          <h3 class="field-label scout-section-title">Rotinas</h3>
+          <p class="modal-note">Rondas automáticas, também com o mapa na bandeja. Esperam enquanto o plano passa de 80%, e missão urgente vira notificação.</p>
+          <ul class="scout-routines" id="scout-routines"></ul>
+          <div class="scout-equip-actions">
+            <button class="btn btn-ghost" id="scout-routine-add" type="button">+ Rotina</button>
+            <button class="btn btn-primary" id="scout-equip-save" type="button">Salvar equipamento</button>
+          </div>
+        </div>
+        <div class="scout-panel" id="scout-journal-panel" role="tabpanel" aria-labelledby="scout-tab-journal" hidden>
+          <p class="modal-note">Cada ronda, cada missão achada e cada missão que um aldeão levou rendem experiência. As levadas e as descartadas entram nas próximas rondas: é assim que ele aprende o que vale trazer.</p>
+          <ul class="scout-journal" id="scout-journal"></ul>
+        </div>
+      </div>
+    </section>
     <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
     <div class="toast" id="toast" role="status" hidden></div>
     <div class="action-menu" id="action-menu" role="menu" aria-label="Ações da sessão" hidden></div>
@@ -327,10 +406,14 @@
       </div>
       <p class="quick-meta" id="base-card-meta"></p>
       <div class="base-card-crew" id="base-card-crew" hidden></div>
-      <form class="quick-form" id="base-card-form" autocomplete="off">
+      <form class="quick-form base-card-tasks" id="base-card-form" autocomplete="off">
         <label class="sr-only" for="base-card-task">Tarefa do novo aldeão</label>
         <input class="field" id="base-card-task" type="text" spellcheck="false" placeholder="Tarefa do novo aldeão" />
       </form>
+      <div class="base-card-queue">
+        <button class="link-button" id="base-card-add" type="button" title="Outro aldeão, com a própria tarefa, trabalhando ao mesmo tempo neste repositório (Shift+Enter). Até 5 de uma vez">+ Mais um aldeão</button>
+        <span class="quick-meta" id="base-card-count" aria-live="polite" hidden></span>
+      </div>
       <div class="base-card-modes" role="group" aria-label="Treinar aldeão">
         <button class="btn" type="button" data-mode="office" data-needs-task="true" title="Treinar o aldeão aqui no app">No app</button>
         <button class="btn btn-primary" type="button" data-mode="cursor" data-needs-task="true" title="Abre uma aba do Claude no Cursor já com a tarefa">No Cursor</button>

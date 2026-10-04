@@ -2,15 +2,47 @@
 //! can be deployed to.
 
 use crate::collector::project_slug;
+use crate::empire::git;
 use crate::transcript::mtime_ms;
 use serde::Serialize;
+use serde_json::Value;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 // Folders that hold repos rather than being one (e.g. ~/Code/Trabalho) are scanned
 // one level deeper; nothing below that, so the list stays fast and free of vendored checkouts.
 const MAX_DEPTH: usize = 2;
 const SKIPPED_DIRS: [&str; 3] = ["node_modules", "target", "vendor"];
+
+const README_NAMES: [&str; 4] = ["README.md", "readme.md", "Readme.md", "README"];
+const README_MAX_BYTES: u64 = 16 * 1024; // the first paragraph is near the top
+const SUMMARY_MAX_CHARS: usize = 280;
+const STACK_MAX: usize = 5;
+// Files or folders at the root and what they say the repository is built with.
+const STACK_FILES: [(&str, &str); 10] = [
+    ("Cargo.toml", "Rust"),
+    ("src-tauri", "Tauri"),
+    ("pyproject.toml", "Python"),
+    ("requirements.txt", "Python"),
+    ("go.mod", "Go"),
+    ("_config.yml", "Jekyll"),
+    ("Gemfile", "Ruby"),
+    ("serverless.yml", "Serverless"),
+    ("supabase", "Supabase"),
+    ("platformio.ini", "PlatformIO"),
+];
+// package.json dependencies worth naming; a package.json with none of them reads as plain Node.
+const PACKAGE_STACKS: [(&str, &str); 8] = [
+    ("next", "Next.js"),
+    ("react", "React"),
+    ("vue", "Vue"),
+    ("svelte", "Svelte"),
+    ("astro", "Astro"),
+    ("vite", "Vite"),
+    ("express", "Express"),
+    ("typescript", "TypeScript"),
+];
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -130,6 +162,162 @@ fn sort_by_recency(projects: &mut [Project]) {
     projects.sort_by(|a, b| b.last_active_at().cmp(&a.last_active_at()).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
 }
 
+/// What the "Novo agente" gallery shows of the chosen repository, read when it is chosen.
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preview {
+    /// The README's first paragraph as plain text, else the manifest's description.
+    pub summary: Option<String>,
+    /// What it is built with, from the manifests at its root.
+    pub stack: Vec<&'static str>,
+    pub branch: Option<String>,
+    /// Subject of the commit HEAD points to, and when it was made.
+    pub last_commit: Option<String>,
+    pub last_commit_at: Option<i64>,
+    /// Files changed, staged or new since that commit.
+    pub changes: Option<u32>,
+}
+
+pub fn preview(repo: &Path) -> Preview {
+    let package = fs::read_to_string(repo.join("package.json")).ok().and_then(|text| serde_json::from_str::<Value>(&text).ok());
+    let summary = read_readme(repo).and_then(|text| readme_summary(&text)).or_else(|| manifest_description(repo, package.as_ref()));
+    let last = git(repo, &["log", "-1", "--format=%ct%x00%s"]);
+    let (seconds, subject) = last.as_deref().and_then(|line| line.trim_end().split_once('\0')).unzip();
+    Preview {
+        summary: summary.map(|text| truncate(&text, SUMMARY_MAX_CHARS)),
+        stack: stack(repo, package.as_ref()),
+        branch: branch(repo),
+        last_commit: subject.map(String::from),
+        last_commit_at: seconds.and_then(|s| s.parse::<i64>().ok()).map(|s| s * 1000),
+        changes: git(repo, &["status", "--porcelain"]).map(|out| out.lines().count() as u32),
+    }
+}
+
+fn read_readme(repo: &Path) -> Option<String> {
+    let file = README_NAMES.iter().find_map(|name| fs::File::open(repo.join(name)).ok())?;
+    let mut bytes = Vec::new();
+    file.take(README_MAX_BYTES).read_to_end(&mut bytes).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// The first paragraph of prose: past the title, badges, images, HTML, lists, tables and code.
+fn readme_summary(text: &str) -> Option<String> {
+    let mut paragraph: Vec<String> = Vec::new();
+    let mut is_code = false;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with("```") || line.starts_with("~~~") {
+            is_code = !is_code;
+            continue;
+        }
+        // "===" or "---" under a line makes it a title; alone it is a rule (or front matter's fence).
+        if !line.is_empty() && (line.chars().all(|c| c == '=') || line.chars().all(|c| c == '-')) {
+            paragraph.clear();
+            continue;
+        }
+        let is_list = ["- ", "* ", "+ "].iter().any(|marker| line.starts_with(marker)) || line.split_once(". ").is_some_and(|(n, _)| n.parse::<u32>().is_ok());
+        let is_skipped = is_code || is_list || line.starts_with(['#', '|', '<']);
+        let prose = if is_skipped { String::new() } else { plain_text(line.trim_start_matches('>').trim()) };
+        if prose.is_empty() {
+            if !paragraph.is_empty() {
+                break;
+            }
+            continue;
+        }
+        paragraph.push(prose);
+    }
+    (!paragraph.is_empty()).then(|| paragraph.join(" "))
+}
+
+// Markdown to the words it shows: images and tags dropped, links reduced to their text.
+fn plain_text(line: &str) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    while let Some(start) = rest.find(['!', '[', '<', '`', '*']) {
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let is_tag = rest[1..].starts_with(|c: char| c.is_ascii_alphabetic() || c == '/' || c == '!');
+        if let Some((_, after)) = rest.strip_prefix("![").and_then(split_link) {
+            rest = after; // an image
+        } else if let Some((text, after)) = rest.strip_prefix('[').and_then(split_link) {
+            out.push_str(&plain_text(text));
+            rest = after;
+        } else if let Some((_, after)) = rest.strip_prefix('<').filter(|_| is_tag).and_then(|r| r.split_once('>')) {
+            rest = after;
+        } else if rest.starts_with(['`', '*']) {
+            rest = &rest[1..];
+        } else {
+            out.push_str(&rest[..1]);
+            rest = &rest[1..];
+        }
+    }
+    out.push_str(rest);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+// "text](url)rest" after a link's "[": its text and what follows. The text may hold brackets, as a
+// badge's does: "[![alt](img)](link)".
+fn split_link(rest: &str) -> Option<(&str, &str)> {
+    let mut depth = 0;
+    for (index, c) in rest.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' if depth > 0 => depth -= 1,
+            ']' => {
+                let url = rest[index + 1..].strip_prefix('(')?;
+                return Some((&rest[..index], url.split_once(')')?.1));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn manifest_description(repo: &Path, package: Option<&Value>) -> Option<String> {
+    let from_package = package.and_then(|p| p.get("description")?.as_str()).map(str::trim).filter(|d| !d.is_empty()).map(String::from);
+    from_package.or_else(|| {
+        ["Cargo.toml", "pyproject.toml"].iter().find_map(|file| {
+            let text = fs::read_to_string(repo.join(file)).ok()?;
+            text.lines().find_map(|line| {
+                let value = line.trim().strip_prefix("description")?.trim_start().strip_prefix('=')?.trim();
+                value.strip_prefix('"')?.strip_suffix('"').filter(|d| !d.is_empty()).map(String::from)
+            })
+        })
+    })
+}
+
+fn stack(repo: &Path, package: Option<&Value>) -> Vec<&'static str> {
+    let mut found: Vec<&'static str> = Vec::new();
+    if let Some(package) = package {
+        let has_dep = |name: &str| ["dependencies", "devDependencies"].iter().any(|key| package.get(key).and_then(|deps| deps.get(name)).is_some());
+        found.extend(PACKAGE_STACKS.iter().filter(|(dep, _)| has_dep(dep)).map(|(_, label)| *label));
+        if found.is_empty() {
+            found.push("Node");
+        }
+    }
+    for (file, label) in STACK_FILES {
+        if repo.join(file).exists() && !found.contains(&label) {
+            found.push(label);
+        }
+    }
+    found.truncate(STACK_MAX);
+    found
+}
+
+// HEAD names the branch ("ref: refs/heads/main"); detached, it holds the commit itself.
+fn branch(repo: &Path) -> Option<String> {
+    let head = fs::read_to_string(git_dir(repo)?.join("HEAD")).ok()?;
+    let head = head.trim();
+    Some(head.strip_prefix("ref: refs/heads/").map(String::from).unwrap_or_else(|| head.chars().take(7).collect()))
+}
+
+fn truncate(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max).collect();
+    format!("{}…", cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head).trim_end_matches([',', ';', ':']))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +384,37 @@ mod tests {
         assert_eq!(tracked_files(&root.join("repo")), Some(4619));
         assert_eq!(tracked_files(&root.join("bad")), None);
         assert_eq!(tracked_files(&root.join("empty")), None); // no commits, nothing staged
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn readme_summary_is_the_first_prose_paragraph_as_plain_text() {
+        let readme = "---\nlayout: x\n---\n<p align=\"center\"><img src=\"logo.png\"></p>\n\n# Shop\n\n\
+            [![CI](https://ci/badge.svg)](https://ci) ![logo](a.png)\n\n\
+            **Shop** sells [things](https://x.y) on `WhatsApp`,\nfast.\n\nSecond paragraph.";
+        assert_eq!(readme_summary(readme).as_deref(), Some("Shop sells things on WhatsApp, fast."));
+
+        let setext = "Title\n=====\n\n> A tagline <br> here\n\n- not this";
+        assert_eq!(readme_summary(setext).as_deref(), Some("A tagline here"));
+        assert_eq!(readme_summary("# Only a title\n\n```\ncode\n```\n- a list\n1. steps"), None);
+        assert_eq!(plain_text("a < b and [WIP] stays"), "a < b and [WIP] stays");
+    }
+
+    #[test]
+    fn long_summaries_end_on_a_word() {
+        assert_eq!(truncate("one two three", 9), "one two…");
+        assert_eq!(truncate("short", 9), "short");
+    }
+
+    #[test]
+    fn branch_comes_from_head_or_the_detached_commit() {
+        let root = std::env::temp_dir().join(format!("cpo-branch-{}", std::process::id()));
+        fs::create_dir_all(root.join("on/.git")).unwrap();
+        fs::create_dir_all(root.join("off/.git")).unwrap();
+        fs::write(root.join("on/.git/HEAD"), "ref: refs/heads/feature-x\n").unwrap();
+        fs::write(root.join("off/.git/HEAD"), "67164ab0123456789\n").unwrap();
+        assert_eq!(branch(&root.join("on")).as_deref(), Some("feature-x"));
+        assert_eq!(branch(&root.join("off")).as_deref(), Some("67164ab"));
         fs::remove_dir_all(root).unwrap();
     }
 

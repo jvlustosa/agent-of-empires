@@ -21,6 +21,20 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     ele fica, vermelho onde não cabe (entre duas bases sempre sobra uma estrada). Perto de uma
     vizinha, ele se alinha com ela. Soltar sobre outra base troca as duas de lugar. Base movida fica
     fixa. Os aldeões vão a pé, pelas estradas, até o lugar novo.
+  - **Aumentar o terreno**: passe o ponteiro na borda tracejada da base (ela acende e o cursor vira
+    o de redimensionar) e arraste uma borda ou um canto, em qualquer vista. O terreno vai do tamanho
+    de uma base nova até três lotes para cada lado, se alinha às vizinhas e a lotes inteiros, e fica
+    vermelho onde não cabe. A base muda ao vivo enquanto você arrasta e fica fixa com o tamanho novo
+    (mover a base leva o terreno junto). O que nasce na terra extra é gerado, sempre igual para o
+    mesmo repositório e tamanho, e o que já estava de pé fica no lugar quando o terreno cresce:
+    - O Centro da Cidade, a mina e a forja continuam juntos na borda de baixo, onde fica o portão.
+    - A terra atrás deles vira uma **muralha** em volta do Centro da Cidade, com torres ao longo dos
+      muros, torre de menagem com bandeira, salões encostados nos muros e um poço no pátio. Antes da
+      era Fortaleza a muralha é uma paliçada de madeira, a não ser que você escolha **Muralha › Pedra**
+      em Personalizar.
+    - O resto vira **vila**: casas no estilo da base (cabanas no Descobrimento), celeiros, campos,
+      árvores e a rua do pátio seguindo até as bordas.
+    - Para voltar ao tamanho normal, arraste a borda de volta até ela encaixar no menor tamanho.
   - **Mover a praça**: arraste o mercado (ou o calçamento ao lado do poço). Ela vai para a terra
     aberta, onde ocupa duas fileiras de altura, com uma estrada até a mais próxima e uma estrada de
     folga das bases, ou volta para o lado da estrada principal (solte-a além da estrada). O lugar
@@ -33,7 +47,7 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     Cada uma se retoma **aqui no app** (escreva o próximo pedido), **no terminal** (`claude --resume`)
     ou **no Cursor**, sempre na pasta onde ela começou. Sessão ainda aberta só foca a aba dela: duas
     retomadas da mesma conversa nunca rodam juntas.
-  - **Personalizar** (clique direito › "Personalizar…", ou Configurações › Bases no mapa):
+  - **Personalizar** (clique direito › "Personalizar base…", ou Configurações › Bases no mapa):
     - **Porte**, as eras do AoE III: Descobrimento (cabana de madeira) › Colonial › Fortaleza (duas
       torres) › Industrial (bandeiras) › Imperial (acabamento em ouro). Começa **pelo tamanho do
       repositório**, contado em arquivos no git: até 149 Descobrimento, 150 Colonial, 500
@@ -41,8 +55,16 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
       volta a seguir o repositório.
     - **Estilo**, as cidades de Ragnarok Online: Prontera (pedra cinza e ameias, o padrão), Geffen
       (ardósia, telhado agudo e torre de cristal), Payon (madeira escura, telhados curvos e
-      lanternas), Morroc (arenito, cúpula, toldos e minaretes) e Aldebaran (tijolo claro e torre do
-      relógio, com o ponteiro andando).
+      lanternas), Morroc (arenito, cúpula, toldos e minaretes), Aldebaran (tijolo claro e torre do
+      relógio, com o ponteiro andando), Alberta (tábuas caiadas, madeira azul e farol aceso à noite),
+      Lutie (neve no telhado, pingentes de gelo e pinheiro enfeitado), Einbroch (tijolo escuro,
+      telhado de fábrica em dente de serra, chaminés fumegando e engrenagem girando), Juno (mármore,
+      colunata, frontão e cúpula) e Umbala (troncos, palha e a grande árvore atravessando o telhado).
+    - **Formato**, as proporções do Centro da Cidade, no 2D e no 3D: Padrão, Comprido (raso e baixo),
+      Alto (sobrado estreito com um andar a mais de janelas), Atarracado (paredes baixas sob um
+      telhadão) e Quadrado (planta quadrada, como um torreão). Nenhum formato passa da largura nem da
+      profundidade da era, então o castelo nunca invade a mina, a forja ou a muralha. Começa
+      **sorteado pelo nome do repositório**, como a cor do time; escolher um fixa esse.
     - **Tamanho do castelo** (vista 3D): Pequeno › Médio › Grande (muralha atrás do Centro da
       Cidade, com quatro torres de telhado na cor do time) › Colossal (muralha alta, torres maiores
       e torre de menagem com bandeira). Antes da era Fortaleza a muralha é uma paliçada de madeira.
@@ -50,16 +72,27 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
       dias desde o primeiro commit (90, 180, 365) dão até 3 pontos cada, e cada 2 pontos sobem um
       tamanho. O castelo cresce para trás e para os lados; a porta fica sempre no pátio.
     - **Giro** (vista 3D): 0°, 90°, 180° ou 270°; clique direito › "Girar castelo" dá um quarto de volta.
+    - **Muralha**, no 2D e no 3D: "Pela era" (paliçada de madeira até Colonial, pedra da Fortaleza em
+      diante, com ameias e torres no telhado do time) ou "Pedra" (muralha de pedra em qualquer era).
+    - **Dimensões** (vista 3D): três controles deslizantes, em % do que o formato dá. **Largura** e
+      **Profundidade** vão de 70% a 130%, **Altura das paredes** de 70% a 160% (acima de 150% da
+      altura da era, as paredes ganham uma segunda fileira de janelas). Largura e profundidade param
+      no tamanho do maior castelo (Imperial Colossal), então o prédio nunca invade a mina, a forja
+      nem os aldeões que trabalham na parede; girado, a face virada para o pátio continua no pátio.
+      "Voltar ao formato" põe os três em 100%. A prévia 3D acompanha enquanto você arrasta.
     - O diálogo mostra a prévia animada na cor do repositório antes de aplicar; na vista 3D, a prévia
-      é o castelo em 3D, com tamanho, muralha e giro.
+      é o castelo em 3D, com tamanho, dimensões, muralha e giro.
   - **Fixar, desafixar e remover da vila**: clique direito no Centro da Cidade, ou Configurações ›
     Bases no mapa (lista as fixas, as ocultas e as que têm agentes agora). Repositório removido some
     do mapa com os aldeões; os agentes dele continuam no painel. Colocar agente nele o mostra de novo.
   - **Menu da base** (clique direito em qualquer ponto dela): cada opção com ícone e nome numa linha;
     a explicação da opção sob o mouse aparece no pé do menu (a de uma opção desativada diz por quê).
-    Três grupos, sem repetir o que outro diálogo já faz: treinar aldeão (no app, no Cursor ou no
-    terminal), mandar os recrutas que esperam ordem e histórico de sessões; personalizar, girar
-    castelo, mover e fundar vizinha; fixar, copiar caminho e remover da vila.
+    No topo, o campo **Treinar aldeão** já vem com o cursor: escreva a tarefa e Enter, e o aldeão
+    sai na hora, no Cursor (o padrão de todo agente novo; seta para baixo desce para as opções).
+    Embaixo, três grupos, sem repetir o que outro diálogo já faz: personalizar treino (o card do
+    Centro da Cidade, para escolher onde ele roda e treinar vários de uma vez), mandar os recrutas que
+    esperam ordem e histórico de sessões; personalizar base, girar castelo, mover e fundar vizinha;
+    fixar, copiar caminho e remover da vila.
   - **Nome no mapa**: "Apelido no mapa" em Personalizar. Só o app muda: a pasta continua igual e
     aparece junto (no menu, no card, na dica do mapa e no painel). Vazio volta ao nome da pasta. O
     nome na etiqueta da base quebra em até duas linhas (nos `-`, `_`, `.` e entre palavras em
@@ -100,8 +133,10 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   - **Conquistas** (10, na Visão do império): Fundador, Cidade-estado, Império, Era Imperial,
     Exército (5 agentes trabalhando juntos), Mina de ouro (100 commits na semana), Celeiro cheio
     (50 h de agente na semana), Explorador, Arquiteto e Maravilha.
-  - **História** (na Visão do império): gráfico dos últimos 30 dias (commits e horas de agente por
-    dia) e os acontecimentos com data: bases fundadas, eras, maravilhas e conquistas.
+  - **História** (na Visão do império): gráfico dos últimos 30 dias, uma linha por recurso (commits
+    e tokens por dia, cada uma com o seu pico), e os acontecimentos com data: bases fundadas, eras,
+    maravilhas e conquistas. Passe o mouse num dia para ver os números dele; fora do
+    gráfico, a linha de baixo soma os 30 dias.
   - **Cor do time e apelido**: em "Personalizar base", escolha uma das 8 cores (ou a automática) e um
     apelido, que aparece no mapa, no card e na Visão do império.
   - **Seu uso** (pé da Visão do império): quantas vezes a Visão foi aberta na semana, a mediana do
@@ -117,10 +152,16 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   - **Na web**: olha o horizonte com a luneta, na frente do pátio.
   - **Pensando, respondendo, planejando, delegando**: no Centro da Cidade, com balão do que faz
     (pergaminho na mão quando escreve ou planeja).
-  - **Esperando você** (sua vez ou precisa de você): sai de perto de quem trabalha e entra na
-    **fila de espera**, à esquerda da porta, embaixo do sino, de frente para você.
+  - **Esperando você** (sua vez ou precisa de você): sai de perto de quem trabalha e entra no
+    **cercado de espera**, à esquerda da porta, embaixo do sino, de frente para você: piso de pedra
+    e uma cerca baixa separando de quem trabalha em frente ao Centro da Cidade.
   - Troca de ferramenta a cada poucos segundos não faz o aldeão atravessar a base toda hora: ele
     termina uma etapa de 2,5 s antes de ir para a próxima frente.
+- **Pegar um aldeão**: segure o botão esquerdo num aldeão e arraste. Ele sai do chão pendurado
+  pela cabeça, esperneia, balança atrás do ponteiro e fica por cima dos prédios; a sombra no chão
+  mostra onde ele está. Solte e ele cai, quica, toma fôlego e volta andando para o que fazia. É só
+  brincadeira: a sessão não percebe nada, nenhuma ordem sai e a seleção não muda. Clicar sem
+  arrastar continua selecionando.
 - **Selecionar e mandar para outro repositório**, como no AoE: clique num aldeão (ou no card, ou
   no "Aldeão ocioso"); **Shift+clique ou Ctrl+clique** somam (no mapa e nos cards); arraste uma
   caixa no chão; **Ctrl+A** (ou "Todos" na barra de seleção) pega todos, inclusive os que estão
@@ -144,9 +185,20 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   - **Precisa de você agora** (vermelho): pergunta, plano ou aprovação bloqueando a sessão. O
     **sino da cidade** sobe e toca ao lado do Centro da Cidade e o território da base pulsa vermelho.
   - **Sua vez** (âmbar): o Claude terminou e espera seu próximo pedido. O card mostra há quanto
-    tempo e a última coisa que ele disse; no mapa, o aldeão fica na fila de espera, ao lado do
+    tempo e a última coisa que ele disse; no mapa, o aldeão fica no cercado de espera, ao lado do
     Centro da Cidade, acenando, com anel âmbar no chão e uma etiqueta de quanto tempo espera.
   - **Trabalhando**: nada a fazer por você.
+  - **Emotes**, como os do Ragnarok: quando algo acontece com um aldeão, um emote animado salta
+    sobre a cabeça dele: **/!** pede aprovação (ele dá um pulo de susto), **/?** fez uma pergunta,
+    **/ho ♪** terminou e é a sua vez, **GG** terminou uma tarefa de mais de 10 min (pula duas
+    vezes, com brilhos), **THX** quando você aprova ou responde, **OK!** quando você manda uma
+    tarefa nova e **/an** (veia de raiva) quando outro agente mexe no mesmo arquivo. **PUSH** (azul)
+    e **MERGE** (roxo) aparecem quando ele publica ou junta branches com sucesso (`git push`,
+    `git merge`, `gh pr merge`) e ficam no ar por 10 min, com o aldeão pulando de tempos em tempos;
+    só somem antes se ele travar, brigar por um arquivo ou receber tarefa nova. Enquanto ele
+    espera você, o emote volta a cada 15 s e o humor piora com a espera: **/swt** (suor) depois de
+    5 min bloqueado, **/sob** (T_T chorando) depois de 15 min, **/…** depois de 5 min na sua vez e
+    **/zzz** depois de 30 min (este a cada 45 s). A arte é própria, no estilo do jogo.
 - **Aldeão ocioso**, como no AoE: o botão no canto do mapa conta quem está na sua vez e, a cada
   clique (ou tecla `.`), seleciona o próximo, do que espera há mais tempo para o mais recente. Com o
   mapa ampliado, ele centraliza no aldeão.
@@ -154,7 +206,10 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   mercado, tocos em volta da fogueira, carroça) com o balão de "sua vez".
 - **Clique no Centro da Cidade**: abre um card pequeno, como o painel de um prédio no AoE, para
   **treinar um aldeão ali**: escreva a tarefa e escolha "No Cursor" (ou Enter, o padrão), "No app"
-  ou "No terminal" (esse sem tarefa só abre o claude). O card mostra era, estilo e quem está na base,
+  ou "No terminal" (esse sem tarefa só abre o claude). **Vários de uma vez**, como a fila de treino
+  do AoE: "+ Mais um aldeão" (ou Shift+Enter) põe outra linha de tarefa na fila, até 5; cada linha
+  escrita vira uma sessão própria no repositório, todas trabalhando ao mesmo tempo, no modo
+  escolhido (linha vazia fica de fora, × tira da fila). O card mostra era, estilo e quem está na base,
   em duas listas: **Aguardando você** (vermelho se precisa de você, âmbar com há quanto tempo é a sua
   vez) e **Trabalhando** (o que cada um faz), com a tarefa; clicar numa linha abre aquela tarefa.
   "Mais opções…" abre o diálogo completo e "Personalizar base" o de porte e estilo.
@@ -177,10 +232,15 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     wezterm, foot e xterm. A tarefa vai como argumento, nunca por shell.
   Enquanto o agente não chega, a terra escolhida mostra o alicerce tracejado ("Nova base"), ou o
   Centro da Cidade mostra a barra de treinamento ("Novo aldeão"). Repositório que já tem base
-  sempre treina lá, mesmo clicando noutra terra. A lista de repositórios vem do mais recente para o
-  mais antigo (último transcript do Claude ou último movimento do git, o que for mais novo), com um
-  selo de quantos agentes estão nele agora (verde se algum trabalha); a busca filtra a cada tecla,
-  sem acento e por palavras ("chat ui"), e setas + Enter escolhem.
+  sempre treina lá, mesmo clicando noutra terra. Os repositórios aparecem numa galeria, cada um com o
+  seu Centro da Cidade como está no mapa (era, estilo, forma e cor), do mais recente para o mais
+  antigo (último transcript do Claude ou último movimento do git, o que for mais novo), com um selo
+  de quantos agentes estão nele agora (verde se algum trabalha). Ao lado, a prévia do escolhido: o
+  primeiro parágrafo do README (ou a descrição do `package.json`, `Cargo.toml` ou `pyproject.toml`),
+  com o que ele usa (Next.js, Rust, Jekyll…), o branch, quantos arquivos estão alterados sem commit
+  e o último commit. A busca filtra a cada tecla, sem acento e por palavras ("chat ui"); setas para
+  cima e para baixo andam uma linha, esquerda e direita um card (quando o cursor do texto já está na
+  ponta), e Enter escolhe.
 - **Subagentes** viram soldados com lança escoltando o aldeão que os chamou; a flâmula da lança tem
   a cor do que o subagente está fazendo.
 - **Duas sessões no mesmo arquivo** nas últimas 2 h: espadas cruzadas sobre os dois aldeões.
@@ -254,11 +314,22 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   - **Isométrica**: a mesma pixel art em losango, com prédios, árvores e aldeões em pé, estilo
     Ragnarok Online. Q e E giram um quarto de volta.
   - **3D, estilo Age of Empires III** (three.js, embutido em `src/vendor/three/`, carregado só
-    quando escolhido): terreno com morros e floresta em volta, estradas e pátios de terra batida, sol
+    quando escolhido): terreno com morros e floresta em volta, um rio correndo pela floresta ao norte
+    (onde o império nunca cresce), estradas e pátios de terra batida, sol
     com sombras e noite com janelas acesas, Centro da Cidade em 3D por era e estilo (telhado na cor do
     time, torres, bandeiras, cristal de Geffen, relógio de Aldebaran), mina, forja com fogo,
     aldeões e batedor em 3D, praça com poço, mercado e fogueira, e as ruínas sob a
-    névoa. Os aldeões trabalham com o corpo todo: picareta acima da cabeça na mina (ouro voando),
+    névoa. A mina (com os estandartes na cor do time e ouro ao pé da rocha), a forja (ferreiro com
+    forno de cúpula, telhado na cor do time, fogo aceso na boca do forno) e os pinheiros são modelos
+    prontos do KayKit Medieval Hexagon Pack (CC0), em `src/models/kaykit/`. As paredes do Centro da
+    Cidade (porta em arco, janelas com moldura que acendem à noite, reboco nas cores do estilo ou
+    tábuas na cabana e em Umbala) e os telhados de duas águas (oitão na cor da parede, telhado na cor
+    do time) são montados com peças do Fantasy Town Kit da Kenney (CC0), em `src/models/kenney/`,
+    no tamanho, formato e era do castelo. Os aldeões são personagens animados do KayKit Adventurers
+    (CC0), em `src/models/kaykit-adventurers/`: cavaleiro, bárbaro, mago ou ladina, com a túnica e a
+    capa na cor do time, pele e cabelo de cada um e, em metade deles, elmo, gorro de urso ou chapéu
+    de mago. Os modelos carregam em segundo plano e, até chegarem (ou
+    se faltarem), o mapa mostra as versões desenhadas em código. Os aldeões trabalham com o corpo todo: picareta acima da cabeça na mina (ouro voando),
     martelo na bigorna (faíscas) e na parede do Centro da Cidade (poeira), luneta varrendo o
     horizonte, pergaminho aberto nas mãos ao responder ou planejar, mão no queixo ao pensar, braço
     apontando ao delegar; quem espera você acena com o braço aberto (os dois, quando está travado). A rodinha aproxima no ponteiro e a câmera abaixa ao chegar perto, como no jogo; Q e E giram
@@ -268,11 +339,14 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     desenham.
 - **Só o mapa** (tecla `F` ou ⛶ nos controles): esconde a coluna de comando e o painel, e o mapa
   ocupa a janela inteira. Os recursos, o aldeão ocioso e os controles continuam por cima do mapa.
+- **Recolher o painel** (» no topo do painel ou Ctrl+B): o painel vira uma faixa fina com "Agentes";
+  clicar nela (ou Ctrl+B de novo) reabre. Em Configurações › Exibição › **Lado do painel**, ele vai
+  para a direita (padrão) ou para a esquerda do mapa. As duas escolhas ficam salvas.
 - **Clique na tarefa** (aldeão ou card): painel mínimo com o tempo da tarefa ("trabalhando há 12min"),
   Aprovar/Negar quando há pedido, os atalhos, um campo de comando e "Abrir no Cursor".
 - **Mouse em cima liga os dois lados**: passar num card (ou pedido de aprovação) acende o aldeão (seta,
   anel amarelo e rótulo com a tarefa) e a base dele no mapa; passar no aldeão marca o card no painel.
-- **Clique direito** na terra livre oferece fundar uma base ali; num repositório da lista, escolher ou
+- **Clique direito** na terra livre oferece fundar uma base ali; num repositório da galeria, escolher ou
   abrir o claude num terminal. O menu do navegador nunca aparece no mapa.
 - **"…" na tarefa** (card do painel ao passar o mouse, rótulo do aldeão selecionado, ou clique
   direito no aldeão ou no card):
@@ -310,13 +384,23 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     turno, como missão entregue, e bipe duplo quando passa a precisar de você. Sessões SDK ficam
     mudas. Sintetizado no Rust (`src-tauri/src/sound.rs`) e tocado pelo `pw-play`, porque o WebAudio
     fica mudo no WebKitGTK; `src/js/sfx.js` tem a mesma partitura em WebAudio, para o navegador.
-  - **Trilha sonora** (ligada por padrão): cinco temas originais no clima da trilha de Ragnarok
-    Online, um por estilo de cidade, tocados em sequência e em loop: Prontera (valsa de flauta e
-    harpa), Geffen (caixa de música em mi dórico), Payon (flauta pentatônica, koto e tambor), Morroc
-    (escala hijaz, alaúde e darbuka) e Aldebaran (valsa de caixa de música com o relógio). Não é a
-    OST de verdade: as melodias são escritas como notas em `src-tauri/src/music.rs` e sintetizadas
-    ali (flauta, cordas, cordas dedilhadas, sino, percussão e reverb). A música pausa quando a janela
-    vai para a bandeja, volta quando ela abre, e para junto com o app.
+  - **Trilha sonora** (ligada por padrão), em dois estilos:
+    - **Lo-fi** (padrão): seis faixas originais para trabalhar, com Rhodes, baixo, bateria boom-bap
+      com swing, chiado de vinil e o som de fita gasta (afinação que ondula, agudos abafados, notas
+      um pouco fora da grade): Café das três (vibrafone), Chuva no vidro (harpa e flauta em meio
+      tempo), Commit de madrugada (caixa de música), Merge sem conflito (koto e flauta), Ônibus
+      noturno (vibrafone sobre cordas) e Build verde (violão de nylon). A bateria entra depois de
+      dois compassos.
+    - **Temas da vila**: cinco temas no clima da trilha de Ragnarok Online, um por estilo de
+      cidade: Prontera (valsa de flauta e harpa), Geffen (caixa de música em mi dórico), Payon
+      (flauta pentatônica, koto e tambor), Morroc (escala hijaz, alaúde e darbuka) e Aldebaran
+      (valsa de caixa de música com o relógio). Não é a OST de verdade.
+    - Cada estilo toca as faixas em sequência e em loop, começando por uma diferente a cada vez. O
+      nome da faixa aparece embaixo do volume; **Próxima ⏭** (ou a tecla **M** no mapa) pula para a
+      seguinte, que leva cerca de um segundo para começar na primeira vez.
+    - Tudo é escrito como notas em `src-tauri/src/music.rs` e sintetizado ali, sem arquivo de áudio
+      no app. A música pausa quando a janela vai para a bandeja, volta quando ela abre, e para junto
+      com o app.
   - As escolhas ficam salvas.
 - **⟳ Atualizar** (ou F5 / Ctrl+R, ou "Atualizar" na bandeja) relê tudo do zero e recarrega a tela.
 - A luz do mapa e o relógio seguem o relógio da máquina, com amanhecer e anoitecer graduais.
@@ -409,7 +493,8 @@ layout do mapa, no armazenamento local do app.
 | `.../<sessionId>/subagents/agent-*.jsonl` + `.meta.json` | subagentes ativos, tipo e descrição |
 | `<repo>/.git/index` (só o cabeçalho de 12 bytes) | quantos arquivos o git rastreia: o porte sugerido da base |
 | `git log --since=7.days.ago --numstat`, `git rev-list` | ouro e madeira da semana, total de commits e o primeiro commit (fundação) |
-| `~/.claude/projects/<repo>/*.jsonl` (só os `timestamp`) | horas de agente da semana (comida), o total em disco (XP) e por dia (História); sessão numa subpasta conta para o repositório |
+| `~/.claude/projects/<repo>/*.jsonl` (só os `timestamp`) | horas de agente da semana (comida), o total em disco (XP); sessão numa subpasta conta para o repositório |
+| `~/.claude/projects/<repo>/*.jsonl` e `subagents/` (o `usage` das respostas) | tokens da semana, da janela de 5 h do plano e por dia (História) |
 | `git log --since=30.days.ago` | commits por dia para a História |
 
 Uma thread em Rust confere tudo a cada 1 s, lendo só os bytes novos de cada transcript, e emite

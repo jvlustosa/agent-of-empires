@@ -96,6 +96,16 @@ export function setMusicVolume(volume) {
   window.__TAURI__?.core?.invoke('set_music_volume', { volume }).catch((err) => console.error('[music]', err));
 }
 
+/** "lofi" (the default) or "town" (the Ragnarok-style themes); starts at a random song. */
+export function setMusicStation(station) {
+  window.__TAURI__?.core?.invoke('set_music_station', { station }).catch((err) => console.error('[music]', err));
+}
+
+/** Cuts to the station's next song. */
+export function skipMusicTrack() {
+  window.__TAURI__?.core?.invoke('skip_music_track').catch((err) => console.error('[music]', err));
+}
+
 /** A Claude is blocked on you (question or permission): two descending "uh-oh" blips. */
 export function playNeedsYou(ac = null) {
   if (!ac && playNative('needs_you')) return;

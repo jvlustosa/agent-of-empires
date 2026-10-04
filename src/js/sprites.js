@@ -81,6 +81,22 @@ const HORSES = [
 ];
 
 const SPARK_5 = ['#.#.#', '.###.', '#####', '.###.', '#.#.#'];
+// Claude Code's spinner (· ✢ ✳ ✶ ✻ ✽) in 5×5 pixels: a dot that turns as it grows into the spark.
+const SPINNER = [
+  ['.....', '.....', '..#..', '.....', '.....'],
+  ['.....', '..#..', '.###.', '..#..', '.....'],
+  ['#...#', '.#.#.', '..#..', '.#.#.', '#...#'],
+  ['..#..', '..#..', '#####', '..#..', '..#..'],
+  SPARK_5,
+];
+const SPINNER_FPS = 8;
+
+/** The spinner's frame at t seconds: up to the spark and back down, as the terminal's. */
+export function spinnerFrame(t) {
+  const lap = 2 * SPINNER.length - 2;
+  const step = Math.floor(t * SPINNER_FPS) % lap;
+  return step < SPINNER.length ? step : lap - step;
+}
 
 const ICONS = {
   terminal: ['#....', '.#...', '..#..', '.#...', '#.###'],
@@ -205,6 +221,42 @@ export function drawShadow(ctx, x, y, width = 9) {
  * pose: 'stand' | 'walk' | 'work' (tool swinging) | 'sit' (facing the camera)
  * tool: null | 'pickaxe' | 'hammer' | 'spyglass' | 'scroll'; wave: -1 = arms down, 0/1 = hand up.
  */
+/**
+ * Construir's icon: a keep with two team-roofed towers, 12 x 13 art pixels from (x0, y0), lit from
+ * the left like the units, so it sits beside the villager's bust in the game bar as one set.
+ */
+export function drawKeepIcon(ctx, x0, y0, team, shade) {
+  const P = (c, r, w, h, color) => rect(ctx, x0 + c, y0 + r, w, h, color);
+  // banner on the gate tower
+  P(6, 0, 1, 5, C.woodDark);
+  P(7, 0, 3, 1, team);
+  P(7, 1, 2, 1, shade);
+  // curtain wall: merlons, the lit walkway, then the gate
+  P(3, 5, 1, 1, C.stone);
+  P(5, 5, 2, 1, C.stone);
+  P(8, 5, 1, 1, C.stone);
+  P(3, 6, 6, 7, C.stone);
+  P(3, 6, 6, 1, C.stoneLight);
+  P(5, 8, 2, 1, C.doorDark);
+  P(4, 9, 4, 4, C.doorDark);
+  P(4, 10, 4, 3, C.wood);
+  P(5, 10, 1, 3, C.woodDark);
+  P(7, 10, 1, 3, C.woodDark);
+  // the towers: cone roof in the team color, lit left edge, a lit window
+  for (const left of [0, 9]) {
+    P(left + 1, 1, 1, 1, team);
+    P(left, 2, 3, 1, team);
+    P(left + 2, 2, 1, 1, shade);
+    P(left, 3, 3, 1, shade);
+    P(left, 4, 3, 9, C.stone);
+    P(left, 4, 1, 9, C.stoneLight);
+    P(left + 2, 4, 1, 9, C.stoneDark);
+    P(left + 1, 6, 1, 2, C.windowLit);
+    P(left + 1, 10, 1, 1, C.stoneDark);
+  }
+  P(0, 12, 12, 1, C.stoneDark); // footing
+}
+
 export function drawVillager(ctx, look, ax, ay, dir, pose, frame, t, tool = null, wave = -1) {
   const isSitting = pose === 'sit';
   const x0 = Math.round(ax) - 5;
@@ -449,7 +501,7 @@ export function drawScan(ctx, fromX, fromY, toX, toY, t) {
 }
 
 /** Speech bubble with a pixel icon; (tipX, tipY) is where the tail points. */
-export function drawEmote(ctx, tipX, tipY, kind, t) {
+export function drawEmote(ctx, tipX, tipY, kind, t, frame = spinnerFrame(t)) {
   const icon = ICONS[kind];
   const filled = FILLED_EMOTES[kind];
   const w = 9;
@@ -472,13 +524,280 @@ export function drawEmote(ctx, tipX, tipY, kind, t) {
   rect(ctx, tx + 1, y + h + 1, 1, 1, C.outline);
 
   if (kind === 'thinking') {
-    const isBig = Math.floor(t * 2.5) % 2 === 0;
-    if (isBig) bitmap(ctx, x + 2, y + 2, SPARK_5, { '#': C.claude });
-    else rect(ctx, x + 4, y + 4, 1, 1, C.claude);
+    bitmap(ctx, x + 2, y + 2, SPINNER[frame], { '#': C.claude });
     return;
   }
   if (!icon) return;
   bitmap(ctx, x + 2, y + 2, icon, { '#': filled?.fg ?? darken(kindInfo(kind).color) });
+}
+
+// Ragnarok-style emotes (/!, /?, /ho, /gg, /thx, /ok, /swt, /sob, /..., /zzz, /an): one pops over a
+// villager when something happens to it and plays its loop, with bits flying out of the balloon.
+// Original pixel art in the game's spirit: the game's own sprites are not ours to ship.
+export const FEELING_MS = 3000;
+// A push or a merge is news to keep up: its emote loops for minutes, the villager hopping now and then.
+export const GIT_FEELING_MS = 10 * 60 * 1000;
+const GIT_FEELINGS = new Set(['push', 'merge']);
+const GIT_HOP_EVERY_MS = 6000;
+const FEELING_FPS = 8;
+const FEELING_LOOP = 8;
+const FEELING_FRAMES = Math.ceil((FEELING_MS / 1000) * FEELING_FPS);
+const FEELING_POP_MS = 260;
+const FEELING_FOLD_MS = 180;
+const FEELING_HOP_MS = 320;
+const BALLOON_W = 15;
+const BALLOON_H = 13;
+const BALLOON_SHADE = '#d9dbe3';
+
+const BANG = ['....##d....', '....##d....', '....##d....', '....##d....', '.....#.....', '...........', '....##d....', '....##d....', '...........'];
+const QUESTION = ['...#####...', '..##...##..', '..##...##..', '......##...', '.....##....', '....##.....', '...........', '....##.....', '...........'];
+const NOTES = ['...#######.', '...#######.', '...#.....#.', '...#.....#.', '...#.....#.', '.###...###.', '####..####.', '.##....##..', '...........'];
+const DROP = ['.....#.....', '....###....', '....###....', '...#l###...', '..#l#####..', '..#######..', '..######d..', '...####d...', '....ddd....'];
+const SOB = ['kkkk...kkkk', '.kk.....kk.', '.bb.....bb.', '.bb.kkk.bb.', '.bbk...kbb.', '.bb.....bb.', '.bb.....bb.', '.bb.....bb.', '...........'];
+const BIG_Z = ['...........', '..#######..', '..#######..', '......##...', '.....##....', '....##.....', '...##......', '..#######..', '..#######..'];
+const VEIN = ['...........', '...#...#...', '...#...#...', '.###...###.', '...........', '.###...###.', '...#...#...', '...#...#...', '...........'];
+const VEIN_BIG = ['...#...#...', '...#...#...', '...#...#...', '####...####', '...........', '####...####', '...#...#...', '...#...#...', '...#...#...'];
+const MINI_NOTE = ['.##', '.#.', '##.', '##.'];
+const MINI_QUESTION = ['##.', '..#', '.#.', '...', '.#.'];
+const MINI_Z = ['####', '..#.', '.#..', '####'];
+const MINI_HEART = ['#.#', '###', '.#.'];
+const MINI_DROP = ['.#.', '###', '.#.'];
+const MINI_ARROW = ['..#..', '.###.', '#.#.#', '..#..', '..#..'];
+
+// Block letters for the text emotes: 2 px uprights, 1 px bars.
+const GLYPHS = {
+  G: ['.####.', '##....', '##.###', '##..##', '##..##', '.####.'],
+  O: ['.####.', '##..##', '##..##', '##..##', '##..##', '.####.'],
+  K: ['##..##', '##.##.', '####..', '####..', '##.##.', '##..##'],
+  T: ['######', '..##..', '..##..', '..##..', '..##..', '..##..'],
+  H: ['##..##', '##..##', '######', '##..##', '##..##', '##..##'],
+  X: ['##..##', '.####.', '..##..', '..##..', '.####.', '##..##'],
+  P: ['#####.', '##..##', '##..##', '#####.', '##....', '##....'],
+  U: ['##..##', '##..##', '##..##', '##..##', '##..##', '.####.'],
+  S: ['.#####', '##....', '.####.', '....##', '....##', '#####.'],
+  M: ['##...##', '###.###', '#######', '##.#.##', '##...##', '##...##'],
+  E: ['######', '##....', '#####.', '##....', '##....', '######'],
+  R: ['#####.', '##..##', '##..##', '#####.', '##.##.', '##..##'],
+  '!': ['##', '##', '##', '##', '..', '##'],
+};
+// Light to dark, top to bottom: two letter rows per shade.
+const GOLD = ['#fef3c7', '#fbbf24', '#d97706'];
+const GREEN = ['#bbf7d0', '#22c55e', '#15803d'];
+const PINK = ['#fce7f3', '#f472b6', '#db2777'];
+const SKY = ['#e0f2fe', '#38bdf8', '#0284c7'];
+const VIOLET = ['#ede9fe', '#a78bfa', '#7c3aed'];
+
+const OUTLINE_AROUND = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+
+function outlined(ctx, x, y, rows, color) {
+  for (const [ox, oy] of OUTLINE_AROUND) bitmap(ctx, x + ox, y + oy, rows, { '#': C.outline });
+  bitmap(ctx, x, y, rows, { '#': color });
+}
+
+/** White rounded balloon with its tail at (tipX, tipY); dx shakes the body. Returns its top-left. */
+function drawBalloon(ctx, tipX, tipY, dx = 0) {
+  const w = BALLOON_W;
+  const h = BALLOON_H;
+  const x = Math.round(tipX - w / 2) + dx;
+  const y = Math.round(tipY) - h - 2;
+  rect(ctx, x + 2, y, w - 4, 1, C.outline);
+  rect(ctx, x + 2, y + h - 1, w - 4, 1, C.outline);
+  rect(ctx, x, y + 2, 1, h - 4, C.outline);
+  rect(ctx, x + w - 1, y + 2, 1, h - 4, C.outline);
+  for (const [cx, cy] of [[x + 1, y + 1], [x + w - 2, y + 1], [x + 1, y + h - 2], [x + w - 2, y + h - 2]]) rect(ctx, cx, cy, 1, 1, C.outline);
+  rect(ctx, x + 2, y + 1, w - 4, h - 2, C.white);
+  rect(ctx, x + 1, y + 2, w - 2, h - 4, C.white);
+  rect(ctx, x + 2, y + h - 2, w - 4, 1, BALLOON_SHADE);
+  const tx = Math.round(tipX) - 1;
+  rect(ctx, tx, y + h - 1, 3, 1, BALLOON_SHADE);
+  rect(ctx, tx, y + h, 1, 1, C.outline);
+  rect(ctx, tx + 1, y + h, 1, 1, BALLOON_SHADE);
+  rect(ctx, tx + 2, y + h, 1, 1, C.outline);
+  rect(ctx, tx + 1, y + h + 1, 1, 1, C.outline);
+  return { x, y };
+}
+
+/** Outlined, shaded block letters standing on (tipX, tipY); a wave runs through them. */
+function drawEmoteText(ctx, tipX, tipY, text, shades, n) {
+  const glyphs = [...text].map((letter) => GLYPHS[letter]);
+  const width = glyphs.reduce((sum, glyph) => sum + glyph[0].length + 1, -1);
+  let x = Math.round(tipX - width / 2);
+  glyphs.forEach((glyph, i) => {
+    const phase = (((n - i * 2) % FEELING_LOOP) + FEELING_LOOP) % FEELING_LOOP;
+    const y = Math.round(tipY) - 8 - ([2, 1][phase] ?? 0);
+    for (const [ox, oy] of [...OUTLINE_AROUND, [1, 1]]) bitmap(ctx, x + ox, y + oy, glyph, { '#': C.outline });
+    glyph.forEach((row, r) => bitmap(ctx, x, y + r, [row], { '#': shades[Math.floor(r / 2)] }));
+    x += glyph[0].length + 1;
+  });
+}
+
+function drawSparkle(ctx, x, y, size, color) {
+  if (size <= 0) return;
+  rect(ctx, x, y - size, 1, size * 2 + 1, color);
+  rect(ctx, x - size, y, size * 2 + 1, 1, color);
+  rect(ctx, x, y, 1, 1, '#ffffff');
+}
+
+// Each emote draws frame n (0 until FEELING_FRAMES) of its life; most loop every FEELING_LOOP frames.
+const EMOTES = {
+  // /! : surprise. The balloon shakes, the mark jumps, strokes burst around it.
+  exclaim(ctx, tipX, tipY, n) {
+    const f = n % FEELING_LOOP;
+    const { x, y } = drawBalloon(ctx, tipX, tipY, n < FEELING_LOOP ? [0, 1, 0, -1][f % 4] : 0);
+    bitmap(ctx, x + 2, y + 2 - (f % 4 < 2 ? 1 : 0), BANG, { '#': '#ef4444', d: '#b91c1c' });
+    if (f % 2) return;
+    for (const [px, py] of [[x - 1, y - 1], [x - 2, y - 2], [x + 7, y - 2], [x + 7, y - 3], [x + 15, y - 1], [x + 16, y - 2]]) rect(ctx, px, py, 1, 1, '#ef4444');
+  },
+  // /? : the mark tilts while small ones float off the balloon.
+  question(ctx, tipX, tipY, n) {
+    const f = n % FEELING_LOOP;
+    const { x, y } = drawBalloon(ctx, tipX, tipY);
+    bitmap(ctx, x + 2 + (f < 4 ? 0 : 1), y + 2, QUESTION, { '#': '#2563eb' });
+    const isRight = Math.floor(n / FEELING_LOOP) % 2 === 0;
+    outlined(ctx, isRight ? x + 14 + (f >> 2) : x - 3 - (f >> 2), y - 1 - (f >> 1), MINI_QUESTION, '#60a5fa');
+  },
+  // /ho : music. The notes sway and single ones drift up on both sides.
+  ho(ctx, tipX, tipY, n) {
+    const f = n % FEELING_LOOP;
+    const { x, y } = drawBalloon(ctx, tipX, tipY);
+    bitmap(ctx, x + 2 + [0, 0, 1, 1, 0, 0, -1, -1][f], y + 2 - (f % 4 === 1 ? 1 : 0), NOTES, { '#': '#d97706' });
+    const g = (f + 4) % FEELING_LOOP;
+    outlined(ctx, x + 13 + (f >> 1), y + 1 - f, MINI_NOTE, '#fbbf24');
+    outlined(ctx, x - 2 - (g >> 1), y + 1 - g, MINI_NOTE, '#fbbf24');
+  },
+  // /gg : a big job done. Gold letters wave, sparkles twinkle around.
+  gg(ctx, tipX, tipY, n) {
+    drawEmoteText(ctx, tipX, tipY, 'GG', GOLD, n);
+    [[-10, -12], [10, -14], [11, -5], [-11, -4]].forEach(([sx, sy], i) => {
+      const phase = (n + i * 2) % FEELING_LOOP;
+      drawSparkle(ctx, Math.round(tipX) + sx, Math.round(tipY) + sy, phase < 2 ? 2 : phase < 4 ? 1 : 0, '#fde68a');
+    });
+  },
+  // /thx : you unblocked it. Pink letters, hearts rising.
+  thx(ctx, tipX, tipY, n) {
+    drawEmoteText(ctx, tipX, tipY, 'THX', PINK, n);
+    const f = n % FEELING_LOOP;
+    const g = (f + 4) % FEELING_LOOP;
+    outlined(ctx, Math.round(tipX) + 10 + (f >> 2), Math.round(tipY) - 12 - f, MINI_HEART, '#f43f5e');
+    outlined(ctx, Math.round(tipX) - 13 - (g >> 2), Math.round(tipY) - 12 - g, MINI_HEART, '#f43f5e');
+  },
+  // /ok : you gave it a new task.
+  ok(ctx, tipX, tipY, n) {
+    drawEmoteText(ctx, tipX, tipY, 'OK!', GREEN, n);
+    const phase = n % FEELING_LOOP;
+    drawSparkle(ctx, Math.round(tipX) + 11, Math.round(tipY) - 12, phase < 2 ? 2 : phase < 4 ? 1 : 0, '#bbf7d0');
+  },
+  // /swt : blocked on you for a while. The drop slides, drops fly off both sides.
+  swt(ctx, tipX, tipY, n) {
+    const f = n % FEELING_LOOP;
+    const { x, y } = drawBalloon(ctx, tipX, tipY);
+    bitmap(ctx, x + 2, y + 2 + [-1, -1, 0, 0, 1, 1, 0, 0][f], DROP, { '#': '#3b82f6', l: '#bfdbfe', d: '#1d4ed8' });
+    if (f < 2) return;
+    const d = f - 2;
+    const fall = Math.round((d * d) / 4);
+    outlined(ctx, x - 2 - (d >> 1), y + 3 + fall, MINI_DROP, '#60a5fa');
+    outlined(ctx, x + 14 + (d >> 1), y + 3 + fall, MINI_DROP, '#60a5fa');
+  },
+  // /sob : blocked on you for long. T_T with running tears, drops falling off the balloon.
+  sob(ctx, tipX, tipY, n) {
+    const f = n % FEELING_LOOP;
+    const { x, y } = drawBalloon(ctx, tipX, tipY, f % 4 === 0 ? 1 : 0);
+    bitmap(ctx, x + 2, y + 2, SOB, { k: C.outline, b: '#3b82f6' });
+    const run = y + 4 + (f % 6);
+    rect(ctx, x + 3, run, 2, 1, '#bfdbfe');
+    rect(ctx, x + 10, run, 2, 1, '#bfdbfe');
+    outlined(ctx, x - 2, y + 5 + f, MINI_DROP, '#60a5fa');
+    outlined(ctx, x + 14, y + 5 + ((f + 4) % FEELING_LOOP), MINI_DROP, '#60a5fa');
+  },
+  // /... : your turn for a while. Dots come one by one, the last one hops in.
+  dots(ctx, tipX, tipY, n) {
+    const f = n % FEELING_LOOP;
+    const { x, y } = drawBalloon(ctx, tipX, tipY);
+    const shown = Math.min(3, (f >> 1) + 1);
+    for (let i = 0; i < shown; i++) rect(ctx, x + 3 + i * 4, y + 6 - (i === shown - 1 && f % 2 === 0 ? 1 : 0), 2, 2, '#475569');
+  },
+  // /zzz : your turn for long. A big Z, small ones drifting up out of the balloon.
+  zzz(ctx, tipX, tipY, n) {
+    const f = n % FEELING_LOOP;
+    const { x, y } = drawBalloon(ctx, tipX, tipY);
+    bitmap(ctx, x + 2, y + 2, BIG_Z, { '#': '#6366f1' });
+    outlined(ctx, x + 12 + (f >> 1), y - 1 - f, MINI_Z, '#a5b4fc');
+  },
+  // /push : its commits went up. Sky letters wave, arrows rise over them.
+  push(ctx, tipX, tipY, n) {
+    drawEmoteText(ctx, tipX, tipY, 'PUSH', SKY, n);
+    const f = n % FEELING_LOOP;
+    const g = (f + 4) % FEELING_LOOP;
+    outlined(ctx, Math.round(tipX) + 5, Math.round(tipY) - 17 - f, MINI_ARROW, '#38bdf8');
+    outlined(ctx, Math.round(tipX) - 10, Math.round(tipY) - 17 - g, MINI_ARROW, '#38bdf8');
+  },
+  // /merge : a branch joined another. Violet letters wave, sparkles twinkle over them.
+  merge(ctx, tipX, tipY, n) {
+    drawEmoteText(ctx, tipX, tipY, 'MERGE', VIOLET, n);
+    [[-13, -15], [0, -19], [13, -15]].forEach(([sx, sy], i) => {
+      const phase = (n + i * 3) % FEELING_LOOP;
+      drawSparkle(ctx, Math.round(tipX) + sx, Math.round(tipY) + sy, phase < 2 ? 2 : phase < 4 ? 1 : 0, '#ddd6fe');
+    });
+  },
+  // /an : another agent took its file. The vein throbs, the balloon shakes, steam puffs.
+  an(ctx, tipX, tipY, n) {
+    const f = n % FEELING_LOOP;
+    const { x, y } = drawBalloon(ctx, tipX, tipY, [1, -1][f % 2]);
+    const vein = f % 4 < 2 ? VEIN_BIG : VEIN;
+    bitmap(ctx, x + 3, y + 3, vein, { '#': '#7f1d1d' });
+    bitmap(ctx, x + 2, y + 2, vein, { '#': '#ef4444' });
+    const puff = f >> 1;
+    rect(ctx, x - 1 - puff, y - 1 - puff, 2, 2, '#e5e7eb');
+    rect(ctx, x + 14 + puff, y - 1 - puff, 2, 2, '#e5e7eb');
+  },
+};
+
+// The villager's own reaction: a hop for surprise, two for a big win.
+const HOPS = { exclaim: 1, ok: 1, thx: 1, gg: 2, push: 2, merge: 2 };
+
+export function isGitFeeling(kind) {
+  return GIT_FEELINGS.has(kind);
+}
+
+/** How long this emote stays up. */
+export function feelingMs(kind) {
+  return isGitFeeling(kind) ? GIT_FEELING_MS : FEELING_MS;
+}
+
+/** Balloon scale: pops in with an overshoot, holds, folds away at the end (0 once gone). */
+export function feelingPop(kind, age) {
+  if (age < FEELING_POP_MS) {
+    const p = age / FEELING_POP_MS;
+    return 0.3 + 0.7 * p + 0.5 * Math.sin(p * Math.PI);
+  }
+  return Math.max(0, Math.min(1, (feelingMs(kind) - age) / FEELING_FOLD_MS));
+}
+
+/** How high (pixels) the villager jumps at this moment of its emote. */
+export function feelingHop(kind, age) {
+  const p = (isGitFeeling(kind) ? age % GIT_HOP_EVERY_MS : age) / FEELING_HOP_MS;
+  return p < (HOPS[kind] ?? 0) ? Math.round(Math.sin((p % 1) * Math.PI) * 4) : 0;
+}
+
+/** The frame to draw: the long git emotes loop, the others stop on their last one. */
+export function feelingFrame(kind, age) {
+  const n = Math.floor((age / 1000) * FEELING_FPS);
+  return isGitFeeling(kind) ? n % FEELING_LOOP : Math.min(FEELING_FRAMES - 1, n);
+}
+
+/** The emote at its current size and frame; (tipX, tipY) is where the balloon's tail points. */
+export function drawFeeling(ctx, tipX, tipY, kind, age) {
+  const scale = feelingPop(kind, age);
+  if (scale <= 0) return;
+  ctx.save();
+  ctx.translate(tipX, tipY);
+  ctx.scale(scale, scale);
+  EMOTES[kind](ctx, 0, 0, feelingFrame(kind, age));
+  ctx.restore();
+}
+
+export function drawFeelingFrame(ctx, tipX, tipY, kind, n) {
+  EMOTES[kind](ctx, tipX, tipY, n);
 }
 
 function darken(hex) {
@@ -657,6 +976,16 @@ export function drawBaseGround(ctx, ox, oy, w, h, layout) {
   rect(ctx, ox + layout.gate.x - 4, oy + layout.yardY, 8, h - layout.yardY, C.trodden);
   for (const patch of layout.patches) rect(ctx, ox + patch[0], oy + patch[1], patch[2], patch[3], C.trodden);
   ctx.restore();
+  drawPlaza(ctx, ox + layout.pen.x, oy + layout.pen.y, layout.pen.w, layout.pen.h);
+}
+
+/** One block of the waiting pen's low fence, its foot at (x, y): two rails and a post. */
+export function drawFenceBlock(ctx, x, y, block) {
+  const [x0, gy] = [Math.round(x) - 2, Math.round(y)];
+  const rail = block.isAlongX ? C.woodLight : C.wood;
+  rect(ctx, x0, gy - 4, 4, 1, rail);
+  rect(ctx, x0, gy - 2, 4, 1, rail);
+  if (block.isMerlon) rect(ctx, x0, gy - 5, 1, 5, C.woodDark);
 }
 
 // ---------- Buildings ----------
@@ -678,6 +1007,21 @@ export const TOWN_STYLES = [
   { id: 'payon', name: 'Payon', hint: 'Vila da montanha: madeira escura e telhados curvos' },
   { id: 'morroc', name: 'Morroc', hint: 'Deserto: arenito, cúpula e minaretes' },
   { id: 'aldebaran', name: 'Aldebaran', hint: 'Cidade do relógio: tijolo claro e torre do relógio' },
+  { id: 'alberta', name: 'Alberta', hint: 'Porto mercante: tábuas caiadas, madeira azul e farol' },
+  { id: 'lutie', name: 'Lutie', hint: 'Vila do Natal: neve no telhado, pingentes de gelo e pinheiro' },
+  { id: 'einbroch', name: 'Einbroch', hint: 'Cidade do aço: tijolo escuro, telhado de fábrica e chaminés' },
+  { id: 'juno', name: 'Juno', hint: 'Cidade dos sábios: mármore, colunas, frontão e cúpula' },
+  { id: 'umbala', name: 'Umbala', hint: 'Aldeia da floresta: troncos, palha e a grande árvore' },
+];
+
+// The town center's proportions, in 2D and 3D; never wider or deeper than its era's, so it always
+// fits the plot. Until the user picks one, the repository's name draws it, as the team color.
+export const FORMS = [
+  { id: 1, name: 'Padrão', hint: 'As proporções de sempre' },
+  { id: 2, name: 'Comprido', hint: 'Salão raso e baixo, alongado' },
+  { id: 3, name: 'Alto', hint: 'Sobrado estreito, com um andar a mais de janelas' },
+  { id: 4, name: 'Atarracado', hint: 'Paredes baixas sob um telhadão' },
+  { id: 5, name: 'Quadrado', hint: 'Planta quadrada, como um torreão' },
 ];
 
 // How big the town center stands in the 3D view, at first from the repository's size and age.
@@ -688,12 +1032,19 @@ export const SIZES = [
   { id: 4, name: 'Colossal', hint: 'Muralha alta, torres maiores e torre de menagem' },
 ];
 
-export const DEFAULT_TOWN = { era: 2, style: 'prontera', size: 2 };
+// The town center's free dimensions in the 3D view, in percent of what its form gives (100: as is).
+export const DIMENSIONS = [
+  { id: 'width', name: 'Largura', min: 70, max: 130 },
+  { id: 'depth', name: 'Profundidade', min: 70, max: 130 },
+  { id: 'height', name: 'Altura das paredes', min: 70, max: 160 },
+];
+
+export const DEFAULT_TOWN = { era: 2, style: 'prontera', size: 2, form: 1 };
 
 // Everything a town center draws stays inside its 40 x 36 box, widened by this on each side and
-// raised by TOWN_REACH_UP (spires, the clock tower, Geffen's crystal).
+// raised by TOWN_REACH_UP (spires, the clock tower, Geffen's crystal, Umbala's tree).
 export const TOWN_REACH_SIDE = 5;
-export const TOWN_REACH_UP = 16;
+export const TOWN_REACH_UP = 18;
 
 const ERA_SHAPES = [
   { bodyW: 24, bodyH: 13, windowDx: 7, roofH: 7, towerH: 0 },
@@ -703,17 +1054,46 @@ const ERA_SHAPES = [
   { bodyW: 36, bodyH: 20, windowDx: 12, roofH: 12, towerH: 32 },
 ];
 
+// How each form changes the era's body in 2D (rows and columns added); Alto gets a second row of windows.
+const FORM_SHAPES = {
+  1: { w: 0, h: 0, roof: 0 },
+  2: { w: 0, h: -3, roof: -2 },
+  3: { w: -4, h: 5, roof: 1, isTall: true },
+  4: { w: -2, h: -3, roof: 3 },
+  5: { w: -6, h: 2, roof: 2 },
+};
+const MIN_BODY_W = 22; // a window each side of the door
+
 const STYLE_ART = {
   prontera: { wall: C.stone, light: C.stoneLight, dark: C.stoneDark, trim: C.woodDark, texture: 'stone' },
   geffen: { wall: '#6d7192', light: '#9095b6', dark: '#4a4d68', trim: '#2f2b45', texture: 'slate' },
   payon: { wall: '#e4d6b2', light: '#f3ead2', dark: '#b3a07a', trim: '#4a2e1a', texture: 'timber' },
   morroc: { wall: '#d9b77e', light: '#efd6a4', dark: '#ae8c56', trim: '#7a5a30', texture: 'sand', isArched: true },
   aldebaran: { wall: '#ddd3bf', light: '#f2ecdd', dark: '#a59a84', trim: '#5e4b3a', texture: 'brick' },
+  alberta: { wall: '#ece6d6', light: '#fbf8ef', dark: '#bdb39c', trim: '#2f5d7c', texture: 'clapboard' },
+  lutie: { wall: '#b5654a', light: '#d1876a', dark: '#8a4634', trim: '#f4f4f0', texture: 'clapboard' },
+  einbroch: { wall: '#7b5b4c', light: '#977563', dark: '#563e33', trim: '#3b3f4a', texture: 'brick' },
+  juno: { wall: '#eeeae0', light: '#ffffff', dark: '#c4bdac', trim: '#8a7d5e', texture: 'marble' },
+  umbala: { wall: '#7a5230', light: '#9b6c40', dark: '#553820', trim: '#3d2a17', texture: 'logs' },
 };
 
-function townShape(era) {
-  const index = Math.min(ERA_SHAPES.length - 1, Math.max(0, Math.round(Number(era) || DEFAULT_TOWN.era) - 1));
-  return { era: index + 1, ...ERA_SHAPES[index] };
+/** The form a repository's name draws until the user picks one. */
+export function formFor(project) {
+  return pick(FORMS, hashString(project) >>> 11).id;
+}
+
+// The era's body stretched by the form. windowY is how high above the ground the windows start.
+function townShape(design) {
+  const index = Math.min(ERA_SHAPES.length - 1, Math.max(0, Math.round(Number(design.era) || DEFAULT_TOWN.era) - 1));
+  const base = ERA_SHAPES[index];
+  const form = FORM_SHAPES[design.form] ?? FORM_SHAPES[DEFAULT_TOWN.form];
+  const isHut = index === 0;
+  const bodyW = Math.max(MIN_BODY_W, base.bodyW + form.w);
+  const bodyH = base.bodyH + form.h;
+  const windowDx = Math.min(Math.max(base.windowDx + Math.round(form.w / 3), isHut ? 7 : 8), Math.floor(bodyW / 2) - 4);
+  const windowY = Math.min(isHut ? 10 : 12, bodyH - 2);
+  const upperY = form.isTall && windowY + 7 < bodyH ? windowY + 7 : 0;
+  return { ...base, era: index + 1, bodyW, bodyH, roofH: base.roofH + form.roof, windowDx, windowY, upperY };
 }
 
 function townArt(style) {
@@ -722,16 +1102,21 @@ function townArt(style) {
 
 /** How far above the door's foot a town center's roof ridge stands (spires and towers aside). */
 export function townCenterHeight(design = DEFAULT_TOWN) {
-  const shape = townShape(design.era);
+  const shape = townShape(design);
   return shape.bodyH + shape.roofH;
 }
 
 /** Window lights of a town center, relative to its 40 x 36 box, for the night glow. */
 export function townCenterLights(design = DEFAULT_TOWN) {
-  const shape = townShape(design.era);
-  const y = 36 - (shape.era === 1 ? 10 : 12) + 2.5;
+  const shape = townShape(design);
+  const y = 36 - shape.windowY + 2.5;
   const lights = [-1, 1].map((side) => ({ x: 20 + side * shape.windowDx + 0.5, y, r: 9, color: '#fcd77a' }));
+  if (shape.upperY) for (const dx of [-shape.windowDx, 0, shape.windowDx]) lights.push({ x: 20 + dx + 0.5, y: 36 - shape.upperY + 2.5, r: 8, color: '#fcd77a' });
   const roofTop = 36 - shape.bodyH + 1 - shape.roofH;
+  if (design.style === 'alberta' && shape.era >= 2) {
+    const lamp = albertaLamp(20, 36 - shape.bodyH + 1, shape);
+    lights.push({ x: lamp.x + 2.5, y: lamp.y + 1.5, r: 14, color: '#fde68a' });
+  }
   if (design.style === 'geffen' && shape.era >= 2) lights.push({ x: 20, y: roofTop - 5 - shape.era * 2, r: 12, color: '#7dd3fc' }); // the crystal
   if (design.style === 'payon' && shape.era >= 2) {
     for (const side of [-1, 1]) lights.push({ x: 20 + side * (shape.bodyW / 2 + 1), y: 36 - shape.bodyH + 4, r: 7, color: '#f87171' });
@@ -744,7 +1129,7 @@ export function townCenterLights(design = DEFAULT_TOWN) {
  * how robust it stands (hut, house, towers, flags, gold) and the style its city.
  */
 export function drawTownCenter(ctx, ox, oy, team, isNight, rise = 1, design = DEFAULT_TOWN, t = 0) {
-  const shape = townShape(design.era);
+  const shape = townShape(design);
   const art = townArt(design.style);
   const style = STYLE_ART[design.style] ? design.style : DEFAULT_TOWN.style;
   const cx = ox + 20;
@@ -759,8 +1144,9 @@ export function drawTownCenter(ctx, ox, oy, team, isNight, rise = 1, design = DE
   }
   const span = shape.bodyW + (shape.towerH ? 12 : 2);
   rect(ctx, cx - span / 2, gy - 1, span, 2, C.shadow);
-  drawTownBody(ctx, cx, gy, shape, art, isNight);
   const roofBase = gy - shape.bodyH + 1;
+  if (style === 'umbala' && shape.era >= 2) drawUmbalaTree(ctx, cx, roofBase - shape.roofH - 1, shape); // behind the hut
+  drawTownBody(ctx, cx, gy, shape, art, isNight);
   TOWN_ROOFS[style](ctx, cx, roofBase, shape, art, team, t);
   if (shape.era >= 5) rect(ctx, cx - shape.bodyW / 2 - 1, roofBase - 1, shape.bodyW + 2, 1, C.gold);
   if (shape.towerH) {
@@ -788,14 +1174,14 @@ function drawTownBody(ctx, cx, gy, shape, art, isNight) {
   } else {
     drawWallTexture(ctx, art.texture, x0, y0, w, h, art);
   }
-  const wy = gy - (isHut ? 10 : 12);
   const glass = isNight ? C.windowLit : C.windowDark;
-  for (const side of [-1, 1]) {
-    const wx = cx + side * shape.windowDx - 2;
+  const drawWindow = (wx, wy) => {
     rect(ctx, wx, wy, 5, 5, art.trim);
     rect(ctx, wx + 1, wy + 1, 3, 3, glass);
     if (art.texture === 'timber') rect(ctx, wx + 2, wy + 1, 1, 3, art.trim);
-  }
+  };
+  for (const side of [-1, 1]) drawWindow(cx + side * shape.windowDx - 2, gy - shape.windowY);
+  if (shape.upperY) for (const dx of [-shape.windowDx, 0, shape.windowDx]) drawWindow(cx + dx - 2, gy - shape.upperY);
   const dw = isHut ? 6 : 8;
   const dh = isHut ? 8 : 11;
   rect(ctx, cx - dw / 2 - 1, gy - dh - 1, dw + 2, dh + 1, art.trim);
@@ -837,6 +1223,25 @@ function drawWallTexture(ctx, texture, x0, y0, w, h, art) {
     for (let y = y0 + 3; y < y0 + h - 2; y += 3) {
       rect(ctx, x0 + 1, y, w - 2, 1, art.dark);
       for (let x = x0 + ((y - y0) % 6 ? 2 : 5); x < x0 + w - 1; x += 6) rect(ctx, x, y + 1, 1, 2, art.dark);
+    }
+  } else if (texture === 'clapboard') {
+    // lapped boards, corner boards in the trim color
+    for (let y = y0 + 3; y < y0 + h - 2; y += 3) rect(ctx, x0 + 1, y, w - 2, 1, art.dark);
+    rect(ctx, x0, y0 + 1, 2, h - 3, art.trim);
+    rect(ctx, x0 + w - 2, y0 + 1, 2, h - 3, art.trim);
+  } else if (texture === 'marble') {
+    // pilasters under a cornice
+    rect(ctx, x0, y0 + 2, w, 1, art.dark);
+    for (let x = x0 + 2; x < x0 + w - 2; x += 6) {
+      rect(ctx, x, y0 + 3, 2, h - 5, art.light);
+      rect(ctx, x + 2, y0 + 3, 1, h - 5, art.dark);
+    }
+  } else if (texture === 'logs') {
+    // stacked logs, their round ends past the corners
+    for (let y = y0 + 1; y < y0 + h - 2; y += 3) {
+      rect(ctx, x0, y, w, 1, art.light);
+      rect(ctx, x0, y + 2, w, 1, art.dark);
+      for (const x of [x0 - 1, x0 + w - 1]) rect(ctx, x, y, 2, 2, art.trim);
     }
   }
 }
@@ -894,6 +1299,54 @@ function drawChimneySmoke(ctx, x, y, t) {
     rect(ctx, x + 1 + Math.round(Math.sin(t * 2 + i) * 1.2), y - 2 - Math.floor(rise), 2, 2, `rgba(210, 210, 210, ${0.45 - rise / 25})`);
   }
 }
+
+// Alberta's lighthouse stands behind the ridge, right of center; its lamp room (5 x 3) is here.
+function albertaLamp(cx, baseY, shape) {
+  return { x: cx + Math.round(shape.bodyW / 4) - 2, y: baseY - shape.roofH - shape.era * 2 - 3 };
+}
+
+// A factory smokestack, `h` rows down from `top`, puffing dark smoke.
+function drawSmokestack(ctx, x, top, h, t) {
+  rect(ctx, x, top, 4, h, '#4a4f5c');
+  rect(ctx, x, top, 1, h, '#6b7180');
+  for (let y = top + 4; y < top + h; y += 5) rect(ctx, x, y, 4, 1, '#2d3039');
+  rect(ctx, x - 1, top, 6, 1, '#2d3039');
+  for (let i = 0; i < 3; i++) {
+    const rise = (t * 5 + i * 4 + x) % 12;
+    const size = 2 + Math.floor(rise / 5);
+    rect(ctx, x + 1 + Math.round(Math.sin(t * 1.5 + i + x) * 1.5) - (size - 2) / 2, top - 2 - Math.floor(rise), size, size, `rgba(70, 70, 76, ${0.55 - rise / 24})`);
+  }
+}
+
+// Umbala's great tree: the trunk hides behind the hut, the crown spreads over the ridge at `ridgeY`.
+function drawUmbalaTree(ctx, cx, ridgeY, shape) {
+  const r = 5 + shape.era;
+  const cy = ridgeY + 4 - r;
+  rect(ctx, cx - 2, cy, 4, ridgeY - cy + 4, C.trunk);
+  for (const [dx, dy, k] of [[-r * 0.6, 2, 0.7], [r * 0.6, 2, 0.7], [0, 0, 1]]) {
+    const rr = Math.round(r * k);
+    const bx = Math.round(cx + dx);
+    for (let y = -rr; y <= rr; y++) {
+      const half = Math.round(Math.sqrt(rr * rr - y * y)) + (ihash(bx * 31 + y) % 2);
+      const row = cy + dy + y;
+      rect(ctx, bx - half, row, half * 2, 1, y < -rr / 3 ? C.leafLight : y > rr / 3 ? C.leafDark : C.leaf);
+      if (half > 2 && ihash(bx + y * 7) % 3 === 0) rect(ctx, bx - half + 1 + (ihash(y + bx) % (half * 2 - 2)), row, 1, 1, C.leafLight);
+    }
+  }
+}
+
+// Thatch: straw with a tint of the team color (the ridge cap carries the color itself).
+function thatchOf(team) {
+  return [mix(team[0], C.hay, 0.8), mix(team[1], C.hayDark, 0.8)];
+}
+
+// Recolors the top `rows` of a roof drawGableRoof drew (snow, a ridge cap), on the same slope.
+function drawGableCap(ctx, cx, roofTop, width, height, top, rows, colors) {
+  const capW = 2 * Math.round((width * (top + (1 - top) * ((rows - 1) / (height - 1)))) / 2);
+  drawGableRoof(ctx, cx, roofTop + rows, capW, rows, colors, (width * top) / capW);
+}
+
+const SNOW = ['#f4f4f0', '#cfd8e3'];
 
 const TOWN_ROOFS = {
   prontera(ctx, cx, baseY, shape, art, team, t) {
@@ -987,6 +1440,68 @@ const TOWN_ROOFS = {
     drawGableRoof(ctx, cx, top + 1, 12, 6, team, 0.08);
     if (shape.era >= 5) rect(ctx, cx - 1, top - 8, 1, 3, C.gold);
   },
+  alberta(ctx, cx, baseY, shape, art, team, t) {
+    if (shape.era >= 2) {
+      // the harbor's lighthouse behind the ridge: red and white bands, the lamp turning
+      const lamp = albertaLamp(cx, baseY, shape);
+      for (let y = lamp.y + 3; y < baseY - 2; y++) rect(ctx, lamp.x, y, 5, 1, Math.floor((y - lamp.y - 3) / 3) % 2 ? '#c0392b' : C.white);
+      rect(ctx, lamp.x + 4, lamp.y + 3, 1, baseY - lamp.y - 5, 'rgba(0, 0, 0, 0.18)');
+      rect(ctx, lamp.x - 1, lamp.y + 3, 7, 1, art.trim);
+      rect(ctx, lamp.x, lamp.y, 5, 3, art.trim);
+      rect(ctx, lamp.x + 1, lamp.y, 3, 3, '#fde68a');
+      rect(ctx, lamp.x + 1 + (Math.floor(t * 4) % 3), lamp.y + 1, 1, 1, C.white);
+      drawTowerCap(ctx, lamp.x - 1, lamp.y, [7, 5, 3], team);
+    }
+    drawGableRoof(ctx, cx, baseY, shape.bodyW + 6, shape.roofH, team, 0.4);
+  },
+  lutie(ctx, cx, baseY, shape, art, team, t) {
+    if (shape.era >= 2) drawChimneySmoke(ctx, cx - Math.round(shape.bodyW / 4) - 2, baseY - shape.roofH - 2, t);
+    const width = shape.bodyW + 6;
+    const height = shape.roofH + 2;
+    const top = drawGableRoof(ctx, cx, baseY, width, height, team, 0.1);
+    // snow over the upper rows of the roof, icicles under the eave
+    drawGableCap(ctx, cx, top, width, height, 0.1, Math.ceil(height * 0.45), SNOW);
+    for (let x = cx - width / 2 + 1; x < cx + width / 2 - 1; x += 3) rect(ctx, x, baseY, 1, 1 + (ihash(x) % 2), '#e0f2fe');
+    if (shape.era < 5) return;
+    // Imperial: a gold star on the ridge
+    rect(ctx, cx - 1, top - 2, 3, 1, C.gold);
+    rect(ctx, cx, top - 3, 1, 3, C.gold);
+  },
+  einbroch(ctx, cx, baseY, shape, art, team, t) {
+    const x0 = cx - shape.bodyW / 2;
+    // smokestacks behind a sawtooth factory roof, glass on each tooth's upright face
+    const stackH = 4 + shape.era * 2;
+    const stacks = shape.era >= 3 ? [x0 + 3, x0 + shape.bodyW - 7] : [x0 + shape.bodyW - 7];
+    for (const sx of stacks) drawSmokestack(ctx, sx, baseY - 4 - stackH, stackH + 2, t);
+    rect(ctx, x0 - 1, baseY - 2, shape.bodyW + 2, 2, art.trim);
+    const [roof, shade] = team;
+    const teeth = Math.floor(shape.bodyW / 6);
+    for (let k = 0, x = x0 + Math.floor((shape.bodyW - teeth * 6) / 2); k < teeth; k++, x += 6) {
+      for (let j = 0; j < 3; j++) rect(ctx, x + j * 2, baseY - 3 - j, 5 - j * 2, 1, j ? roof : shade);
+      rect(ctx, x + 5, baseY - 5, 1, 3, '#6b8fb0');
+    }
+  },
+  juno(ctx, cx, baseY, shape, art, team) {
+    if (shape.era >= 3) {
+      // the sages' dome rises behind the pediment
+      const radius = shape.era + 3;
+      rect(ctx, cx - radius, baseY - 6, radius * 2, 5, art.wall);
+      rect(ctx, cx - radius, baseY - 6, radius * 2, 1, art.light);
+      for (let x = cx - radius + 2; x < cx + radius - 1; x += 3) rect(ctx, x, baseY - 5, 1, 4, art.dark);
+      drawDome(ctx, cx, baseY - 6, radius, [team[1], mix(team[1], '#000000', 0.2)]);
+    }
+    const width = shape.bodyW + 4;
+    drawGableRoof(ctx, cx, baseY, width, Math.max(4, shape.roofH - 3), team, 0.04);
+    rect(ctx, cx - width / 2, baseY - 1, width, 1, art.light);
+    rect(ctx, cx - width / 2, baseY, width, 1, art.dark);
+  },
+  umbala(ctx, cx, baseY, shape, art, team) {
+    const width = shape.bodyW + 8;
+    const top = drawGableRoof(ctx, cx, baseY, width, shape.roofH + 1, thatchOf(team), 0.2);
+    drawGableCap(ctx, cx, top, width, shape.roofH + 1, 0.2, 3, team);
+    // ragged straw along the eave
+    for (let x = cx - width / 2; x < cx + width / 2; x += 2) rect(ctx, x, baseY, 1, 1 + (ihash(x * 5) % 2), C.hayDark);
+  },
 };
 
 // Pointed or round cap over a 7-wide tower: one centered row per width, from the bottom up.
@@ -1008,7 +1523,7 @@ function drawTownTower(ctx, tx, gy, shape, art, style, team, isNight, t) {
   rect(ctx, tx + 6, top, 1, shape.towerH, art.dark);
   rect(ctx, tx, gy - 2, 7, 2, art.dark);
   if (art.texture === 'timber') rect(ctx, tx, top + 4, 7, 1, art.trim);
-  if (art.texture === 'brick') for (let y = top + 3; y < gy - 2; y += 3) rect(ctx, tx + 1, y, 5, 1, art.dark);
+  if (['brick', 'clapboard', 'logs'].includes(art.texture)) for (let y = top + 3; y < gy - 2; y += 3) rect(ctx, tx + 1, y, 5, 1, art.dark);
   rect(ctx, tx + 3, top + 6, 1, 3, isNight ? C.windowLit : C.windowDark);
   rect(ctx, tx + 3, top + 14, 1, 3, isNight ? C.windowLit : C.windowDark);
   let capTop = top;
@@ -1025,6 +1540,19 @@ function drawTownTower(ctx, tx, gy, shape, art, style, team, isNight, t) {
     capTop = drawTowerCap(ctx, tx, top, [7, 7, 5, 3], team);
     rect(ctx, tx + 3, capTop - 3, 1, 3, C.gold);
     capTop -= 3;
+  } else if (style === 'lutie') {
+    capTop = drawTowerCap(ctx, tx, top, [9, 7, 7, 5, 5, 3, 3, 1], team);
+    drawTowerCap(ctx, tx, top - 5, [3, 3, 1], SNOW);
+  } else if (style === 'einbroch') {
+    // a flat iron top with a stack of its own
+    rect(ctx, tx - 1, top - 2, 9, 2, art.trim);
+    rect(ctx, tx + 2, top - 6, 3, 4, '#4a4f5c');
+    capTop = top - 6;
+  } else if (style === 'juno') {
+    rect(ctx, tx - 1, top - 1, 9, 1, art.light);
+    capTop = drawTowerCap(ctx, tx, top - 1, [7, 7, 5, 3], team);
+  } else if (style === 'umbala') {
+    capTop = drawTowerCap(ctx, tx, top, [9, 9, 7, 5, 3, 1], thatchOf(team));
   } else {
     capTop = drawTowerCap(ctx, tx, top, [7, 7, 5, 5, 3, 1], team);
   }
@@ -1140,6 +1668,140 @@ export function drawPlotGlow(ctx, x, y, w, h, color, t) {
   ctx.globalAlpha = 0.07 + 0.08 * (Math.sin(t * 6) + 1) / 2;
   rect(ctx, x, y, w, h, color);
   ctx.restore();
+}
+
+// ---------- A base's grown land (plot.js) ----------
+
+/** Trodden ground, flat: the village street and the bailey's paths. */
+export function drawTrodden(ctx, x, y, w, h) {
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  rect(ctx, x, y, w, h, C.trodden);
+  ctx.restore();
+}
+
+const CROPS = [[C.hay, C.hayDark], [C.leafLight, C.leaf], ['#9bb84a', '#6f8a32']];
+
+/** A field, flat: tilled earth under rows of wheat, greens or young shoots, picked by its seed. */
+export function drawField(ctx, x, y, w, h, seed) {
+  const [crop, shade] = pick(CROPS, seed >>> 3);
+  rect(ctx, x, y, w, h, C.dirtDark);
+  rect(ctx, x + 1, y + 1, w - 2, h - 2, C.dirt);
+  for (let row = y + 2; row < y + h - 2; row += 3) {
+    rect(ctx, x + 2, row, w - 4, 1, crop);
+    for (let k = x + 3 + (row % 4); k < x + w - 3; k += 4) rect(ctx, k, row + 1, 1, 1, shade);
+  }
+}
+
+const WOOD_ART = { wall: C.wood, light: C.woodLight, dark: C.woodDark, trim: C.woodDark };
+const BARN_ART = { wall: '#9a4630', light: '#b85c42', dark: '#6e2f20', trim: C.white };
+// Village roofs: the team's, terracotta or grey shingle, so the houses don't look cloned.
+const VILLAGE_ROOFS = [null, ['#a34e34', '#7d3a26'], ['#7a6a58', '#5a4c3e']];
+const WALL_H = 7;
+
+/** The bailey is a wooden palisade before Fortaleza, unless the user picked stone walls. */
+export function isPalisade(design) {
+  return (design.era ?? DEFAULT_TOWN.era) <= 2 && !design.hasStoneWalls;
+}
+
+// The bailey stands in the town center's stone, or as a wooden palisade (as in 3D).
+function wallArt(design) {
+  if (isPalisade(design)) return { ...WOOD_ART, isPalisade: true };
+  return townArt(design.style);
+}
+
+/** One block of the bailey's wall, its foot at (x, y): the face along x, the side down y, merlons on top. */
+export function drawWallBlock(ctx, x, y, block, team, design) {
+  const art = wallArt(design);
+  const [x0, gy] = [Math.round(x) - 2, Math.round(y)];
+  rect(ctx, x0, gy - WALL_H, 4, WALL_H, block.isAlongX ? art.wall : art.dark);
+  if (art.isPalisade) {
+    rect(ctx, x0 + 1, gy - WALL_H - 1, 2, 1, art.wall); // the stakes' points
+    rect(ctx, x0 + (block.isMerlon ? 0 : 2), gy - WALL_H + 1, 1, WALL_H - 2, art.dark);
+    return;
+  }
+  rect(ctx, x0, gy - WALL_H, 4, 1, art.light);
+  rect(ctx, x0, gy - 1, 4, 1, art.dark);
+  if (block.isMerlon) rect(ctx, x0, gy - WALL_H - 2, 3, 2, block.isAlongX ? art.light : art.wall);
+}
+
+/** A round tower on the bailey's wall, its foot at (x, y), capped in the team color (thatch on a palisade). */
+export function drawWallTower(ctx, x, y, team, design) {
+  const art = wallArt(design);
+  const [tx, gy] = [Math.round(x) - 4, Math.round(y)];
+  const h = art.isPalisade ? 12 : 15;
+  rect(ctx, tx - 1, gy - 1, 11, 2, C.shadow);
+  rect(ctx, tx, gy - h, 9, h, art.wall);
+  rect(ctx, tx, gy - h, 2, h, art.light);
+  rect(ctx, tx + 7, gy - h, 2, h, art.dark);
+  rect(ctx, tx + 4, gy - h + 5, 1, 3, C.windowDark); // arrow slit
+  drawTowerCap(ctx, tx + 1, gy - h, [11, 9, 7, 5, 3, 1], art.isPalisade ? thatchOf(team) : team);
+}
+
+/** A building the land grew (plot.js), its footprint at (x, y): the keep, a hall, a house or a barn. */
+export function drawPlotBuilding(ctx, x, y, building, team, design, isNight, t) {
+  if (building.kind === 'keep') {
+    drawKeep(ctx, x, y, building, team, wallArt(design), isNight, t);
+    return;
+  }
+  const { kind, w, h, axis, seed } = building;
+  const isHut = (design.era ?? DEFAULT_TOWN.era) <= 1;
+  const art = kind === 'barn' ? BARN_ART : isHut ? WOOD_ART : townArt(design.style);
+  const gy = y + h;
+  const bodyH = kind === 'barn' ? 9 : kind === 'hall' ? 8 : 7;
+  const top = gy - bodyH;
+  const cx = x + w / 2;
+  const glass = isNight ? C.windowLit : C.windowDark;
+  rect(ctx, x - 1, gy - 1, w + 2, 2, C.shadow);
+  rect(ctx, x, top, w, bodyH, art.wall);
+  rect(ctx, x, top, w, 1, art.light);
+  rect(ctx, x, top, 1, bodyH, art.dark);
+  rect(ctx, x + w - 1, top, 1, bodyH, art.dark);
+  if (kind === 'barn') {
+    // a wide door with its cross brace
+    rect(ctx, cx - 3, gy - 6, 6, 6, art.dark);
+    rect(ctx, cx - 3, gy - 6, 6, 1, art.trim);
+    for (let k = 0; k < 5; k++) rect(ctx, cx - 3 + k + 0.5, gy - 5 + k, 1, 1, art.trim);
+  } else {
+    const doorX = kind === 'hall' ? cx - 1.5 : x + 3 + (seed % Math.max(1, w - 9));
+    rect(ctx, Math.round(doorX), gy - 5, 3, 5, C.doorDark);
+    for (let wx = x + 3; wx + 2 <= x + w - 2; wx += 6) {
+      if (wx + 2 >= doorX - 1 && wx <= doorX + 4) continue;
+      rect(ctx, wx, top + 2, 2, 2, glass);
+    }
+  }
+  // the ridge runs along the long front (a trapezoid) or front to back (the gable end shows)
+  const roof = kind === 'hall' ? team : isHut ? thatchOf(team) : (pick(VILLAGE_ROOFS, seed >>> 5) ?? team);
+  const roofH = axis === 'y' ? Math.max(5, Math.round(w * 0.45)) : Math.max(4, Math.round(h * 0.55));
+  const roofTop = drawGableRoof(ctx, cx, top + 1, w + 2, roofH, roof, axis === 'y' ? 0.12 : 0.5);
+  if (kind === 'house' && seed % 3 === 0) {
+    const chimney = x + w - 5;
+    rect(ctx, chimney, roofTop + 1, 2, 3, C.stoneDark);
+    drawChimneySmoke(ctx, chimney, roofTop - 1, t);
+  }
+}
+
+// The keep: a square tower over the bailey, crenellated, the team's flag on top.
+function drawKeep(ctx, x, y, b, team, art, isNight, t) {
+  const gy = y + b.h;
+  const bodyH = 20 + Math.round(b.h / 2);
+  const top = gy - bodyH;
+  const mid = x + b.w / 2;
+  rect(ctx, x - 1, gy - 1, b.w + 2, 2, C.shadow);
+  rect(ctx, x, top, b.w, bodyH, art.wall);
+  rect(ctx, x, top, 2, bodyH, art.light);
+  rect(ctx, x + b.w - 2, top, 2, bodyH, art.dark);
+  rect(ctx, x, top, b.w, 1, art.dark);
+  for (let k = x; k < x + b.w - 1; k += 3) rect(ctx, k, top - 2, 2, 2, art.wall);
+  const glass = isNight ? C.windowLit : C.windowDark;
+  for (const wy of [top + 5, top + 12]) rect(ctx, mid - 1, wy, 2, 4, glass);
+  rect(ctx, mid - 2, gy - 6, 4, 6, C.doorDark);
+  const [color, shade] = team;
+  const flap = Math.floor(t * 3 + x) % 2;
+  rect(ctx, mid, top - 11, 1, 9, C.woodDark);
+  rect(ctx, mid + 1, top - 11, 5, 3, color);
+  rect(ctx, mid + 6, top - 11 + flap, 1, 2, color);
+  rect(ctx, mid + 1, top - 8, 5, 1, shade);
 }
 
 /** Gold mine, 28 x 20 at (ox, oy): rocks, a timbered entrance and glinting veins. */
@@ -1365,3 +2027,111 @@ export function drawGlow(ctx, x, y, radius, color, strength) {
   ctx.restore();
 }
 
+
+// ---------- O Batedor: the village's hero, a knight on a barded horse ----------
+
+// Slack's four colors and its aubergine: the shield's mark, the pennant and the horse's cloth.
+export const SLACK = { blue: '#36c5f0', green: '#2eb67d', yellow: '#ecb22e', red: '#e01e5a', aubergine: '#4a154b', aubergineLight: '#6b2a6d' };
+// The hash in a 5 x 5 grid, four arms turning around the middle: [x, y, color].
+const SLACK_MARK = [
+  [1, 0, 'blue'], [0, 1, 'blue'], [1, 1, 'blue'], [2, 1, 'blue'],
+  [3, 0, 'green'], [3, 1, 'green'], [4, 1, 'green'], [3, 2, 'green'],
+  [2, 3, 'yellow'], [3, 3, 'yellow'], [4, 3, 'yellow'], [3, 4, 'yellow'],
+  [1, 2, 'red'], [0, 3, 'red'], [1, 3, 'red'], [1, 4, 'red'],
+];
+// Armor by experience: leather, iron, steel, then gold.
+export const KNIGHT_ARMOR = [
+  { base: '#8a5a32', shade: '#5e3c20', light: '#b07a48' },
+  { base: '#9aa3ad', shade: '#6b7280', light: '#c4cad1' },
+  { base: '#d6dbe3', shade: '#9aa3ad', light: '#f3f5f8' },
+  { base: '#f2c84b', shade: '#c99a2e', light: '#fff3b0' },
+];
+
+export function knightTier(level) {
+  return level >= 7 ? 3 : level >= 5 ? 2 : level >= 3 ? 1 : 0;
+}
+
+/** Heater shield, 7 x 9 from its top-left corner, white with the Slack mark; never mirrored. */
+export function drawSlackShield(ctx, x, y, rim = '#3b2a1a') {
+  const left = Math.round(x);
+  const top = Math.round(y);
+  rect(ctx, left, top, 7, 7, rim);
+  rect(ctx, left + 1, top + 7, 5, 1, rim);
+  rect(ctx, left + 2, top + 8, 3, 1, rim);
+  rect(ctx, left + 1, top + 1, 5, 6, '#f6f3ec');
+  rect(ctx, left + 2, top + 7, 3, 1, '#f6f3ec');
+  for (const [mx, my, color] of SLACK_MARK) rect(ctx, left + 1 + mx, top + 1 + my, 1, 1, SLACK[color]);
+}
+
+/**
+ * The scout on its barded horse, seen from the side, 24 px wide and 29 tall from the hooves at
+ * (ax, ay). The lance carries a pennant in Slack's colors; the armor follows its level.
+ */
+export function drawKnight(ctx, look, ax, ay, facing, isMoving, frame, t, level = 1) {
+  const x0 = Math.round(ax) - 12;
+  const by = Math.round(ay);
+  const isFlipped = facing === 'w';
+  const P = (c, r, w, h, color) => rect(ctx, isFlipped ? x0 + 24 - c - w : x0 + c, by + r, w, h, color);
+  const [coat, coatShade, mane] = look.horse;
+  const armor = KNIGHT_ARMOR[knightTier(level)];
+  const lift = isMoving ? frame % 2 : 0;
+  // legs and hooves, trotting in diagonal pairs
+  for (const col of [5, 7, 15, 17]) {
+    const kick = col === 5 || col === 17 ? lift : isMoving ? 1 - lift : 0;
+    P(col, -5 + kick, 1, 4 - kick, col % 2 ? coat : coatShade);
+    P(col, -1, 1, 1, '#2a1d12');
+  }
+  // tail, body, neck and head
+  P(1, -11, 3, 1, mane);
+  P(1, -10, 2, 4 + (isMoving ? frame % 2 : 0), mane);
+  P(4, -12, 15, 6, coat);
+  P(16, -16, 3, 6, coat);
+  P(18, -18, 4, 3, coat);
+  P(21, -16, 2, 2, coat);
+  P(22, -15, 1, 1, '#2a1d12');
+  P(19, -19, 1, 1, coat);
+  P(15, -17, 2, 7, mane);
+  P(20, -17, 1, 1, C.eye);
+  // barding: the aubergine cloth with a gold hem, in scallops
+  P(4, -12, 12, 6, SLACK.aubergine);
+  P(4, -12, 12, 1, SLACK.aubergineLight);
+  P(4, -6, 12, 1, SLACK.yellow);
+  for (let col = 4; col < 16; col += 3) P(col + 1, -5, 1, 1, SLACK.yellow);
+  P(16, -15, 2, 4, SLACK.aubergine);
+  // rider: boot, body, tabard, helm, plume
+  P(10, -11, 2, 3, armor.shade);
+  P(9, -19, 5, 8, armor.base);
+  P(9, -19, 1, 8, armor.shade);
+  P(12, -19, 1, 3, armor.light);
+  P(10, -17, 3, 5, SLACK.aubergine);
+  P(10, -13, 3, 1, SLACK.yellow);
+  P(13, -17, 2, 2, armor.base);
+  P(9, -24, 5, 5, armor.base);
+  P(9, -24, 1, 5, armor.shade);
+  P(10, -25, 3, 1, armor.light);
+  P(11, -22, 3, 1, '#1f2937');
+  P(12, -20, 1, 1, armor.shade);
+  const sway = Math.round(Math.sin(t * 6) * (isMoving ? 1 : 0.6));
+  P(10, -28, 2, 3, SLACK.red);
+  P(9 - sway, -29, 2, 2, SLACK.red);
+  // lance held high, the pennant flapping off it above the horse's head
+  for (let i = 0; i < 14; i++) P(14 + Math.floor(i / 4), -16 - i, 1, 1, i >= 12 ? '#e5e7eb' : C.wood);
+  const flap = Math.floor(t * 8) % 2;
+  [SLACK.blue, SLACK.green, SLACK.yellow, SLACK.red].forEach((color, i) => P(18, -28 + i, 4 - (i % 2) * flap - (i > 1 ? 1 : 0), 1, color));
+  // the shield on the near side, its mark always read the right way round
+  const shieldCol = 3;
+  drawSlackShield(ctx, isFlipped ? x0 + 24 - shieldCol - 7 : x0 + shieldCol, by - 17);
+}
+
+/** A rolled parchment with a red seal: missions the scout brought back. Centered on x, bottom at y. */
+export function drawMissionScroll(ctx, x, y, t = 0) {
+  const left = Math.round(x) - 5;
+  const top = Math.round(y) - 8 + (Math.floor(t * 2) % 2);
+  rect(ctx, left + 1, top, 8, 1, '#a07c3c');
+  rect(ctx, left, top + 1, 10, 5, '#f3e2b3');
+  rect(ctx, left + 1, top + 6, 8, 1, '#a07c3c');
+  rect(ctx, left + 2, top + 2, 5, 1, '#b08d4f');
+  rect(ctx, left + 2, top + 4, 4, 1, '#b08d4f');
+  rect(ctx, left + 7, top + 4, 2, 2, '#c2262e');
+  rect(ctx, left + 7, top + 6, 1, 1, '#8b1a20');
+}

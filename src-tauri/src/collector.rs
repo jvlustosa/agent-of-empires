@@ -3,7 +3,7 @@
 //! Sources: `~/.claude/sessions/<pid>.json` (one per running process, with busy/idle status)
 //! and `~/.claude/projects/<slug>/<sessionId>.jsonl` (+ `<sessionId>/subagents/agent-*.jsonl`).
 
-use crate::transcript::{clip, describe_tool, mtime_ms, LastKind, PendingTool, Step, TranscriptState, TranscriptTracker};
+use crate::transcript::{clip, describe_tool, mtime_ms, GitEvent, LastKind, PendingTool, Step, TranscriptState, TranscriptTracker};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -74,6 +74,9 @@ pub struct Agent {
     pub model: Option<String>,
     pub activity: Activity,
     pub subagents: Vec<Subagent>,
+    /// Latest push or merge that went through, its subagents' included.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<GitEvent>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -186,7 +189,9 @@ impl Collector {
             };
             seen.insert(path.clone());
             let mut agent = to_agent(&session, Some(self.tracker(&path).refresh()), now);
-            agent.subagents = self.collect_subagents(&path, &session.session_id, now, &mut seen);
+            let (subagents, subagent_git) = self.collect_subagents(&path, &session.session_id, now, &mut seen);
+            agent.subagents = subagents;
+            agent.git = GitEvent::latest(agent.git.take(), subagent_git);
             agents.push(agent);
         }
 
@@ -207,7 +212,7 @@ impl Collector {
                 continue;
             }
             let Some(session) = read_json::<SessionFile>(&path) else { continue };
-            if !is_process_alive(session.pid, session.proc_start.as_ref()) {
+            if crate::scout::is_scout_dir(&session.cwd) || !is_process_alive(session.pid, session.proc_start.as_ref()) {
                 continue;
             }
             let is_newer = by_id
@@ -238,9 +243,10 @@ impl Collector {
         Some(found)
     }
 
-    fn collect_subagents(&mut self, transcript: &Path, session_id: &str, now: i64, seen: &mut HashSet<PathBuf>) -> Vec<Subagent> {
+    fn collect_subagents(&mut self, transcript: &Path, session_id: &str, now: i64, seen: &mut HashSet<PathBuf>) -> (Vec<Subagent>, Option<GitEvent>) {
         let dir = transcript.with_extension("").join("subagents");
         let mut subagents = Vec::new();
+        let mut git = None;
         for path in list_dir(&dir) {
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                 continue;
@@ -252,6 +258,7 @@ impl Collector {
             seen.insert(path.clone());
 
             let state = self.tracker(&path).refresh();
+            git = GitEvent::latest(git, state.git.clone());
             let pending = state.latest_pending_tool(now).cloned();
             let is_done = pending.is_none() && state.last_kind == Some(LastKind::Text);
             let quiet_for = now - state.mtime_ms;
@@ -274,7 +281,7 @@ impl Collector {
                 activity,
             });
         }
-        subagents
+        (subagents, git)
     }
 }
 
@@ -347,6 +354,7 @@ fn to_agent(session: &SessionFile, state: Option<&TranscriptState>, now: i64) ->
         model: state.and_then(|s| s.model.clone()),
         activity,
         subagents: Vec::new(),
+        git: state.and_then(|s| s.git.clone()),
     }
 }
 

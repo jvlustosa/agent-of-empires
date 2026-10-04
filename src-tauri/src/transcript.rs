@@ -47,6 +47,19 @@ pub enum LastKind {
     ToolResult,
 }
 
+/// The session's latest successful push or merge: the map celebrates it for a while.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct GitEvent {
+    pub kind: &'static str,
+    pub at: Option<i64>,
+}
+
+impl GitEvent {
+    pub fn latest(a: Option<GitEvent>, b: Option<GitEvent>) -> Option<GitEvent> {
+        a.into_iter().chain(b).max_by_key(|event| event.at)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PendingTool {
     pub name: String,
@@ -69,6 +82,7 @@ pub struct TranscriptState {
     pub last_kind: Option<LastKind>,
     pub last_event_at: Option<i64>,
     pub pending: HashMap<String, PendingTool>,
+    pub git: Option<GitEvent>,
     pub mtime_ms: i64,
 }
 
@@ -160,19 +174,22 @@ impl TranscriptState {
     }
 
     fn apply_user(&mut self, message: &Value, at: Option<i64>) {
-        let result_ids: Vec<&str> = message
+        let results: Vec<(&str, bool)> = message
             .get("content")
             .and_then(Value::as_array)
             .map(|blocks| {
                 blocks
                     .iter()
                     .filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_result"))
-                    .filter_map(|b| b.get("tool_use_id").and_then(Value::as_str))
+                    .filter_map(|b| {
+                        let is_error = b.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+                        b.get("tool_use_id").and_then(Value::as_str).map(|id| (id, is_error))
+                    })
                     .collect()
             })
             .unwrap_or_default();
 
-        if result_ids.is_empty() {
+        if results.is_empty() {
             // A fresh prompt starts a new turn: anything still pending was interrupted.
             self.pending.clear();
             self.steps.clear();
@@ -180,8 +197,16 @@ impl TranscriptState {
             self.last_prompt_at = at;
             return;
         }
-        for id in result_ids {
-            self.pending.remove(id);
+        for (id, is_error) in results {
+            let Some(tool) = self.pending.remove(id) else { continue };
+            // Only a command that went through counts: a rejected push or a denied one is no news.
+            if is_error || tool.name != "Bash" {
+                continue;
+            }
+            let command = tool.input.get("command").and_then(Value::as_str).unwrap_or_default();
+            if let Some(kind) = git_action(command) {
+                self.git = Some(GitEvent { kind, at });
+            }
         }
         self.last_kind = Some(LastKind::ToolResult);
     }
@@ -334,6 +359,71 @@ pub fn tool_kind(name: &str) -> &'static str {
         "AskUserQuestion" | "ExitPlanMode" => "asking",
         _ => "tool",
     }
+}
+
+/// "push" for `git push`, "merge" for `git merge` or `gh pr merge`, None otherwise. In a chain
+/// (`git merge x && git push`) the last one wins; quoted text, like a commit message, never counts.
+pub fn git_action(command: &str) -> Option<&'static str> {
+    shell_commands(command).iter().filter_map(|words| git_action_of(words)).last()
+}
+
+fn git_action_of(words: &[String]) -> Option<&'static str> {
+    let words: Vec<&str> = words.iter().map(String::as_str).skip_while(|w| w.contains('=') && !w.starts_with('-')).collect();
+    let (program, args) = words.split_first()?;
+    let has = |flags: &[&str]| args.iter().any(|arg| flags.contains(arg));
+    match program.rsplit('/').next()? {
+        "gh" => (args.len() >= 2 && args[..2] == ["pr", "merge"]).then_some("merge"),
+        "git" => match git_subcommand(args)? {
+            "push" if !has(&["--dry-run", "-n"]) => Some("push"),
+            "merge" if !has(&["--abort", "--quit"]) => Some("merge"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+// The subcommand past git's own options (`git -C repo -c k=v push`).
+fn git_subcommand<'a>(args: &[&'a str]) -> Option<&'a str> {
+    let mut args = args.iter();
+    while let Some(&arg) = args.next() {
+        if arg == "-C" || arg == "-c" {
+            args.next();
+        } else if !arg.starts_with('-') {
+            return Some(arg);
+        }
+    }
+    None
+}
+
+// The words of each simple command in a shell line, split at ; & | ( ) and newlines outside quotes.
+fn shell_commands(line: &str) -> Vec<Vec<String>> {
+    let mut commands = vec![Vec::new()];
+    let mut word = String::new();
+    let mut quote = None;
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (Some('"'), '\\') => word.extend(chars.next()),
+            (Some(q), _) if c == q => quote = None,
+            (Some(_), _) => word.push(c),
+            (None, '\'' | '"') => quote = Some(c),
+            (None, '\\') => word.extend(chars.next()),
+            (None, ' ' | '\t' | ';' | '&' | '|' | '(' | ')' | '\n') => {
+                let words = commands.last_mut().expect("never empty");
+                if !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+                if !matches!(c, ' ' | '\t') && !words.is_empty() {
+                    commands.push(Vec::new());
+                }
+            }
+            _ => word.push(c),
+        }
+    }
+    if !word.is_empty() {
+        commands.last_mut().expect("never empty").push(word);
+    }
+    commands
 }
 
 pub fn describe_tool(name: &str, input: &Value) -> String {
@@ -508,6 +598,35 @@ mod tests {
         let tool = state.pending.get("t1").unwrap();
         assert_eq!(describe_tool(&tool.name, &tool.input), "Abrindo docs.rs");
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn git_action_finds_pushes_and_merges_but_not_their_mentions() {
+        assert_eq!(git_action("git push -u origin feature-x"), Some("push"));
+        assert_eq!(git_action("cd /r && git -C sub -c core.x=1 push"), Some("push"));
+        assert_eq!(git_action("git checkout main && git merge feature-x && git push"), Some("push"));
+        assert_eq!(git_action("git merge --no-ff feature-x"), Some("merge"));
+        assert_eq!(git_action("gh pr merge 42 --squash"), Some("merge"));
+        assert_eq!(git_action("GIT_SSH_COMMAND='ssh -i k' /usr/bin/git push"), Some("push"));
+        assert_eq!(git_action("git push --dry-run"), None);
+        assert_eq!(git_action("git merge --abort"), None);
+        assert_eq!(git_action("git merge-base main HEAD"), None);
+        assert_eq!(git_action(r#"git commit -m "fix; git push later" && echo \"git merge\""#), None);
+        assert_eq!(git_action("echo git push"), None);
+    }
+
+    #[test]
+    fn only_a_push_that_went_through_is_recorded() {
+        let mut state = TranscriptState::default();
+        state.apply_entry(&tool_use("t1", "Bash", json!({"command": "git push origin main"}), "2026-09-30T10:00:00.000Z"));
+        state.apply_entry(&json!({"type": "user", "timestamp": "2026-09-30T10:00:02.000Z",
+            "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "is_error": true}]}}));
+        assert_eq!(state.git, None, "a rejected push is no news");
+
+        state.apply_entry(&tool_use("t2", "Bash", json!({"command": "git merge feature-x"}), "2026-09-30T10:01:00.000Z"));
+        state.apply_entry(&json!({"type": "user", "timestamp": "2026-09-30T10:01:03.000Z",
+            "message": {"content": [{"type": "tool_result", "tool_use_id": "t2"}]}}));
+        assert_eq!(state.git, Some(GitEvent { kind: "merge", at: parse_timestamp_ms("2026-09-30T10:01:03.000Z") }));
     }
 
     #[test]

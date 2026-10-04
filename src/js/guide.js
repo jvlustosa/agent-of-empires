@@ -19,7 +19,9 @@ const SHORTCUTS = [
     ['Q / E', 'giram a câmera'],
     ['F', 'só o mapa'],
     ['I', 'Visão do império'],
+    ['K', 'O Batedor: missões, equipamento e diário'],
     ['B', 'Construir: funda uma base'],
+    ['M', 'próxima música'],
   ]],
   ['Agentes', [
     ['Ctrl+K', 'novo agente'],
@@ -31,6 +33,7 @@ const SHORTCUTS = [
   ]],
   ['Interface', [
     ['Ctrl+= / Ctrl+- / Ctrl+0', 'zoom da interface'],
+    ['Ctrl+B', 'recolhe e reabre o painel'],
     ['F5 ou Ctrl+R', 'relê tudo'],
     ['?', 'esta lista'],
   ]],

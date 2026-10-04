@@ -77,33 +77,54 @@ function svg(tag, attrs) {
   return node;
 }
 
-// 30 days of the empire: commits (gold) over agent hours (food red), one column per day.
+// The history's rows, each on its own scale over the same 30 days.
+const HISTORY_ROWS = [
+  { key: 'commits', resource: 'gold', label: 'Ouro · commits', color: '#f2c84b' },
+  { key: 'tokens', resource: 'tokens', label: 'Tokens', color: '#3b82f6' },
+];
+
+function describeDays(when, { commits, tokens }) {
+  return `${when}: ${whole.format(commits)} ${commits === 1 ? 'commit' : 'commits'} · ${formatResource('tokens', tokens)} tokens`;
+}
+
+// 30 days of the empire, one column per day: commits (gold) and tokens, each row with its peak on
+// the right. Hovering a day reads its numbers under the chart; otherwise the line sums the 30 days.
 function historyChart(days) {
   const width = 600;
-  const rowH = 46;
-  const gap = 2;
-  const barW = width / Math.max(1, days.length) - gap;
-  const maxCommits = Math.max(1, ...days.map((d) => d.commits));
-  const maxMinutes = Math.max(1, ...days.map((d) => d.agentMinutes));
-  const chart = svg('svg', { viewBox: `0 0 ${width} ${rowH * 2 + 34}`, role: 'img', 'aria-label': 'Commits e horas de agente por dia, últimos 30 dias' });
-  days.forEach((day, i) => {
-    const x = i * (barW + gap);
-    const commitsH = Math.round((day.commits / maxCommits) * (rowH - 4));
-    const hoursH = Math.round((day.agentMinutes / maxMinutes) * (rowH - 4));
-    const label = `${dayMonth.format(day.dayStart)}: ${day.commits} commits, ${formatResource('food', day.agentMinutes)} de agente`;
-    const gold = svg('rect', { x, y: rowH - commitsH, width: barW, height: Math.max(commitsH, day.commits ? 1 : 0), fill: '#f2c84b', rx: 1 });
-    const food = svg('rect', { x, y: rowH + 8, width: barW, height: Math.max(hoursH, day.agentMinutes ? 1 : 0), fill: '#dc2626', rx: 1 });
-    for (const bar of [gold, food]) bar.append(Object.assign(svg('title', {}), { textContent: label }));
-    chart.append(gold, food);
-  });
-  chart.append(svg('line', { x1: 0, x2: width, y1: rowH + 4, y2: rowH + 4, stroke: '#3d3223' }));
-  const caption = (x, anchor, text) => {
-    const node = svg('text', { x, y: rowH * 2 + 28, 'text-anchor': anchor, fill: '#8c7b5c', 'font-size': 11 });
-    node.textContent = text;
+  const labelH = 14;
+  const barsH = 36;
+  const rowH = labelH + barsH + 10;
+  const step = width / Math.max(1, days.length);
+  const height = rowH * HISTORY_ROWS.length + 6;
+  const chart = svg('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': 'Commits e tokens por dia, últimos 30 dias' });
+  const text = (x, y, anchor, content) => {
+    const node = svg('text', { x, y, 'text-anchor': anchor });
+    node.textContent = content;
     return node;
   };
-  if (days.length > 0) chart.append(caption(0, 'start', dayMonth.format(days[0].dayStart)), caption(width, 'end', 'hoje'), caption(width / 2, 'middle', `ouro: até ${maxCommits} commits/dia · comida: até ${formatResource('food', maxMinutes)}/dia`));
-  return chart;
+  HISTORY_ROWS.forEach((row, r) => {
+    const base = r * rowH + labelH + barsH;
+    const peak = Math.max(1, ...days.map((day) => day[row.key]));
+    chart.append(text(0, r * rowH + 10, 'start', row.label), text(width, r * rowH + 10, 'end', `pico ${formatResource(row.resource, peak)}/dia`));
+    days.forEach((day, i) => {
+      const barH = day[row.key] ? Math.max(1, Math.round((day[row.key] / peak) * barsH)) : 0;
+      chart.append(svg('rect', { x: i * step, y: base - barH, width: step - 2, height: barH, fill: row.color, rx: 1 }));
+    });
+    chart.append(svg('line', { class: 'history-axis', x1: 0, x2: width, y1: base + 0.5, y2: base + 0.5 }));
+  });
+  if (days.length > 0) chart.append(text(0, height, 'start', dayMonth.format(days[0].dayStart)), text(width, height, 'end', 'hoje'));
+
+  const readout = el('p', 'overview-history-readout');
+  const sum = (key) => days.reduce((total, day) => total + day[key], 0);
+  const showTotal = () => (readout.textContent = describeDays(`${days.length} dias`, { commits: sum('commits'), tokens: sum('tokens') }));
+  days.forEach((day, i) => {
+    const hit = svg('rect', { class: 'history-day', x: i * step - 1, y: 0, width: step, height: height - 12 });
+    hit.addEventListener('pointerenter', () => (readout.textContent = describeDays(dayMonth.format(day.dayStart), day)));
+    chart.append(hit);
+  });
+  chart.addEventListener('pointerleave', showTotal);
+  showTotal();
+  return [chart, readout];
 }
 
 /**
@@ -132,7 +153,7 @@ export function createOverview({ getStats, designOf, isInEmpire, hasBase, onShow
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
     drawGrass(ctx, 0, 0, 50, 56, 3);
-    drawTownCenter(ctx, 5, 16, teamOf(repo.name), false, 1, designOf(repo.name), 0);
+    drawTownCenter(ctx, 5, 18, teamOf(repo.name), false, 1, designOf(repo.name), 0); // room above for the tallest forms
     return canvas;
   }
 
@@ -240,7 +261,7 @@ export function createOverview({ getStats, designOf, isInEmpire, hasBase, onShow
         return badge;
       }),
     );
-    historyEl.replaceChildren(historyChart(stats.days ?? []));
+    historyEl.replaceChildren(...historyChart(stats.days ?? []));
     const events = getEvents().slice(0, 12);
     eventsEl.replaceChildren(
       ...(events.length

@@ -75,6 +75,8 @@ pub struct DayStats {
     pub day_start: i64,
     pub commits: u32,
     pub agent_minutes: u32,
+    /// Tokens agents spent that day, counted as tokens_week.
+    pub tokens: u64,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -103,6 +105,7 @@ struct AgentTime {
     total: u32,
     seconds_by_day: BTreeMap<i64, u32>,
     tokens_week: u64,
+    tokens_by_day: BTreeMap<i64, u64>,
     session: Spend,
 }
 
@@ -219,6 +222,7 @@ pub fn empire(session_start: Option<i64>) -> Empire {
             day_start: day * DAY_MS - utc_offset_ms(day * DAY_MS),
             commits: cache.git.values().map(|entry| entry.stats.commits_by_day.get(&day).copied().unwrap_or(0)).sum(),
             agent_minutes: time.values().map(|agent| agent.seconds_by_day.get(&day).copied().unwrap_or(0)).sum::<u32>() / 60,
+            tokens: time.values().map(|agent| agent.tokens_by_day.get(&day).copied().unwrap_or(0)).sum(),
         })
         .collect();
     Empire { generated_at: now, repos: list, days }
@@ -250,7 +254,7 @@ fn utc_offset_ms(at_ms: i64) -> i64 {
 
 // ---------- Git: gold and wood ----------
 
-fn git(repo: &Path, args: &[&str]) -> Option<String> {
+pub(crate) fn git(repo: &Path, args: &[&str]) -> Option<String> {
     let output = Command::new("git").arg("-C").arg(repo).args(args).env("GIT_OPTIONAL_LOCKS", "0").output().ok()?;
     if !output.status.success() {
         return None;
@@ -329,6 +333,7 @@ fn agent_time_by_repo(scans: &mut HashMap<PathBuf, TranscriptScan>, repos: &[Pro
     let Some(root) = projects::claude_projects_dir() else { return time };
     let Ok(dirs) = fs::read_dir(&root) else { return time };
     let week_start = local_day(now) - (WEEK_DAYS - 1);
+    let history_start = local_day(now) - (HISTORY_DAYS - 1);
     let slugs: Vec<(String, &Project)> = repos.iter().map(|project| (project_slug(&project.path), project)).collect();
     let mut seen = HashSet::new();
     for dir in dirs.flatten() {
@@ -347,6 +352,7 @@ fn agent_time_by_repo(scans: &mut HashMap<PathBuf, TranscriptScan>, repos: &[Pro
                 for (day, seconds) in &scan.seconds_by_day {
                     *agent.seconds_by_day.entry(*day).or_insert(0) += seconds;
                 }
+                agent.add_tokens_by_day(scan, history_start);
                 seen.insert(path);
             } else if file.file_type().is_ok_and(|kind| kind.is_dir()) {
                 // Task subagents write under their session: their tokens count, their time is
@@ -357,6 +363,7 @@ fn agent_time_by_repo(scans: &mut HashMap<PathBuf, TranscriptScan>, repos: &[Pro
                     scan.advance(&path, len);
                     agent.tokens_week += scan.tokens_since(week_start);
                     agent.session.add(scan.spend_since(session_start));
+                    agent.add_tokens_by_day(scan, history_start);
                     seen.insert(path);
                 }
             }
@@ -364,6 +371,14 @@ fn agent_time_by_repo(scans: &mut HashMap<PathBuf, TranscriptScan>, repos: &[Pro
     }
     scans.retain(|path, _| seen.contains(path)); // transcripts Claude Code deleted drop out
     time
+}
+
+impl AgentTime {
+    fn add_tokens_by_day(&mut self, scan: &TranscriptScan, first_day: i64) {
+        for (day, tokens) in scan.tokens_by_day.range(first_day..) {
+            *self.tokens_by_day.entry(*day).or_insert(0) += tokens;
+        }
+    }
 }
 
 fn transcript_file(entry: &fs::DirEntry) -> Option<(PathBuf, u64)> {
@@ -617,7 +632,10 @@ mod tests {
             let month: u32 = empire.days.iter().map(|d| d.commits).sum();
             let tokens: u64 = empire.repos.iter().map(|r| r.tokens_week).sum();
             let session: u64 = empire.repos.iter().map(|r| r.tokens_session).sum();
-            println!("{pass}: {:?} · {} repos, {explored} explored, {gold} commits, {hours} agent hours and {tokens} tokens this week ({session} in the last 5 h), {all_hours} agent hours on disk, {month} commits in 30 days", started.elapsed(), empire.repos.len());
+            let month_tokens: u64 = empire.days.iter().map(|d| d.tokens).sum();
+            // the history's last 7 days are the week the table counts
+            assert_eq!(empire.days.iter().rev().take(WEEK_DAYS as usize).map(|d| d.tokens).sum::<u64>(), tokens);
+            println!("{pass}: {:?} · {} repos, {explored} explored, {gold} commits, {hours} agent hours and {tokens} tokens this week ({session} in the last 5 h), {all_hours} agent hours on disk, {month} commits and {month_tokens} tokens in 30 days", started.elapsed(), empire.repos.len());
         }
         assert!(!empire(None).repos.is_empty());
     }
