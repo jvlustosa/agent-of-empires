@@ -686,3 +686,33 @@ quanto a assinatura está subsidiando.
 | Etapa | Escopo | Status |
 |---|---|---|
 | 1 | Barra e topo da Visão focados em ouro e tokens; custo em API por modelo, assinatura e subsídio com gráfico diário | **Concluída** em 2026-10-04, testes do Rust (preços por modelo, cache de 5 min e 1 h, modo rápido, plano) e contagem real desta máquina (US$ 3.138 em 30 dias contra US$ 100 do Max 5x); interface verificada no Chrome headless nos três casos (subsidiado, assinatura mais cara, plano desconhecido) |
+
+## Iniciativa: vitrine do repositório público
+
+Atualizada em 2026-10-04.
+
+### Problema
+
+O repositório ficou público em 2026-10-04 com um README só de texto. Quem chega pelo GitHub não via
+o mapa, que é o que explica o app em segundos.
+
+### Como funciona
+
+- **README**: banner com o ícone do castelo e a fonte do app, um GIF de abertura (a vila em 3D
+  trabalhando, um aldeão terminando a vez e outro pedindo aprovação) e um tour curto: aprovar pelo
+  painel, treinar um aldeão pelo Centro da Cidade, as três vistas e o painel com o Batedor. Tudo
+  em `docs/media/`.
+- **Dados de demonstração**: as capturas rodam a interface real (`src/`) com um backend falso
+  (repositórios, tarefas e relatos do Slack inventados) no Chrome headless. Nenhum repositório real
+  aparece.
+- **Leve**: GIFs com paleta de 128 cores e pontilhado bayer, de 1 a 2,3 MB cada; 6,5 MB no total.
+- **GitHub**: descrição e tópicos do repositório preenchidos; `docs/media/social-preview.png`
+  (1280×640) pronto para Settings › Social preview, que não tem API.
+
+### Etapas
+
+| Etapa | Escopo | Status |
+|---|---|---|
+| 1 | Repositório público, descrição e tópicos | **Concluída** em 2026-10-04 |
+| 2 | Banner, GIFs e tour no README | **Concluída** em 2026-10-04, PR #1 |
+| 3 | Imagem de prévia social enviada pelo GitHub | A fazer (manual, pelo site) |
