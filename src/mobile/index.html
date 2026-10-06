@@ -18,6 +18,10 @@
         <h2>Conecte este celular</h2>
         <p id="pair-text">No computador, abra o painel <strong>Celular</strong> (ícone de celular no topo da lista de agentes) e escaneie o QR code com a câmera.</p>
       </section>
+      <section class="auto" id="auto" hidden>
+        <p class="auto-text" id="auto-text"></p>
+        <button class="btn" id="auto-toggle" type="button" aria-pressed="false"></button>
+      </section>
       <section class="block" id="approvals-block" hidden>
         <h2>Precisam de você <span class="count" id="approvals-count"></span></h2>
         <ol class="list" id="approvals"></ol>
@@ -49,6 +53,7 @@
       <form method="dialog" class="sheet-body" id="reply-form">
         <h2 id="reply-title">Responder</h2>
         <p class="reply-last" id="reply-last"></p>
+        <p class="note" id="reply-move" hidden></p>
         <label class="label" for="reply-text">Sua mensagem</label>
         <textarea class="field" id="reply-text" rows="4" maxlength="4000" placeholder="Ex.: pode seguir com a opção 2 e rodar os testes" required></textarea>
         <div class="actions">

@@ -14,6 +14,25 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   leva à **praça** (poço, mercado, fogueira e carroça de feno); base longe pega carona na estrada
   de uma vizinha. O que não é base nem estrada é campo aberto, com manchas de terra batida,
   árvores e pedras.
+- **Aldeia ativa ou parada**: uma base está **ativa** quando há uma janela do Cursor (ou do VS Code)
+  aberta na pasta dela ou pelo menos um aldeão trabalhando (quem pede sua aprovação conta: a vez
+  ainda não acabou). Ativa, ela tem a terra clara, o território tracejado na cor do time e a bandeira
+  hasteada. **Parada**, a terra fica na sombra, o tracejado vira pedra e a bandeira fica arriada, caída
+  ao pé do mastro, então dá para ver de longe quais aldeias estão em uso. Aldeão esperando sua vez não
+  acende a base sozinho: ela fica na sombra, com a lâmpada âmbar na placa. O app confere as janelas
+  abertas a cada 10 s. Vale no 2D, no ISO e no 3D.
+- **Aberto ou fechado na placa**: a placa com o nome de cada base tem uma lâmpada, nas cores dos
+  chips do painel: **verde** com aldeão trabalhando, **âmbar** com sessão aberta esperando sua vez,
+  **vermelha** piscando quando alguém precisa de você e **azul** quando só o Cursor está aberto (a
+  linha diz `Cursor aberto`). Base ativa tem a placa com borda dourada e a lâmpada com um anel da
+  própria luz. Repositório **sem sessão e sem editor aberto** fica com a lâmpada apagada, a placa
+  escurecida e a linha `Fechado · sem sessão` (o mesmo texto, ou `Cursor aberto`, no card do Centro da
+  Cidade, na dica ao passar o ponteiro e no menu de quem recebe o comando). Vale no 2D, no ISO e no 3D.
+- **Branch e worktree na placa**: quando a pasta da base não está na `main`/`master`, a placa com o
+  nome ganha uma linha azul, com ícone de branch, dizendo qual é; se a pasta é uma worktree, a
+  linha diz também de qual repositório (`feature-x · worktree de site`). Na main, nada aparece. O
+  card do Centro da Cidade mostra sempre a branch, até a main. Ela vem do `.git/HEAD` da pasta (sem
+  rodar git), relido a cada minuto e na hora em que um aldeão troca de branch.
 - **Suas bases**: os repositórios principais ficam **fixos** no mapa, no lugar que você escolheu,
   mesmo sem agentes (salvo entre sessões). Repositório não fixo tem base temporária, que some quando
   o último agente sai.
@@ -160,8 +179,9 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     deles, com o custo, no topo), e os acontecimentos com data: bases fundadas, eras, maravilhas e
     conquistas. Passe o mouse num dia para ver os números dele; fora do
     gráfico, a linha de baixo soma os 30 dias.
-  - **Cor do time e apelido**: em "Personalizar base", escolha uma das 8 cores (ou a automática) e um
-    apelido, que aparece no mapa, no card e na Visão do império.
+  - **Cor do time e apelido**: em "Personalizar base", escolha uma das 9 cores, preto incluso (ou a
+    automática, que só sorteia entre as 8 primeiras), e um apelido, que aparece no mapa, no card e na
+    Visão do império.
   - **Seu uso** (pé da Visão do império): quantas vezes a Visão foi aberta na semana, a mediana do
     tempo até responder aprovações pelo painel e as sessões esquecidas (sua vez por mais de 30 min).
     Tudo fica no localStorage do app, sem rede.
@@ -175,7 +195,7 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   - **No git** (um comando `git` ou `gh` rodando): também na forja, mas com balão de forquilha
     laranja no lugar do de terminal, e laranja no card e na linha do tempo.
   - **Fora da main**: se a sessão está em outra branch que não `main`/`master`, o nome dela aparece
-    em laranja, com ícone de branch, no card e no rótulo do aldeão (ao passar o mouse ou selecionar).
+    em azul claro, com ícone de branch, no card e no rótulo do aldeão (ao passar o mouse ou selecionar).
   - **Na web**: olha o horizonte com a luneta, na frente do pátio.
   - **Pensando, respondendo, planejando, delegando**: no Centro da Cidade, com balão do que faz
     (pergaminho na mão quando escreve ou planeja).
@@ -199,6 +219,13 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   de base. Esc ou clique no chão limpa a seleção. Sem selecionar: clique direito no aldeão ›
   "Mandar para outro repositório" lista as bases do mapa (o menu dele agrupa Precisa de você,
   Ordens e Sessão).
+  - **Tarefas dos selecionados**: com dois ou mais agentes selecionados, "Tarefas" na barra de
+    seleção (ou a tecla **T**) abre a lista deles agrupada pelo repositório onde cada um trabalha
+    agora: estado, há quanto tempo, a última tarefa e, quando a vez é sua, o que o Claude disse por
+    último. Cada um tem o próprio campo de comando: Enter manda só para aquele (pelo caminho normal
+    da sessão) e o foco passa para o próximo, Shift+Enter quebra a linha. A lista se atualiza com o
+    app aberto sem apagar o que você digitou; sessão de terminal aparece sem campo. Esc fecha e
+    mantém a seleção.
   - Uma sessão do Claude Code nunca muda de pasta: ela trabalha no outro repositório por caminho
     absoluto (permissões fora da pasta aparecem como aprovação, como sempre).
   - **O mapa segue o trabalho de verdade**: o último arquivo editado na tarefa atual (ou desde a
@@ -284,7 +311,9 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   de ícone (castelo e aldeão, com a dica no mouse) e o campo de comando.
   - **Construir** (castelo, ou tecla `B`): busca um repositório da pasta de repositórios; ao escolher, a base dele segue o
     ponteiro como fantasma e o clique constrói ali (base fixa, sem agente). Repositório que já está
-    no mapa muda de lugar. Esc ou botão direito cancelam.
+    no mapa muda de lugar. Esc ou botão direito cancelam. Repositório fora da pasta de repositórios:
+    escreva o caminho (`~/dotfiles`, `/srv/app`) e escolha "Adicionar"; ele fica salvo em
+    `config.json` (`extraRepos`) e entra na lista, na névoa e no "Novo agente" como os outros.
   - **Recrutar aldeão**, como treinar no AoE: clique no botão do aldeão (ou clique direito na terra
     livre › "Recrutar aldeão aqui") e um **recruta** entra pela estrada e faz fila na praça, abaixo
     da fogueira (ou fica onde você clicou), com túnica crua e a etiqueta "novo". Ele já nasce
@@ -362,6 +391,8 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     apontando ao delegar; quem espera você acena com o braço aberto (os dois, quando está travado). A rodinha aproxima no ponteiro e a câmera abaixa ao chegar perto, como no jogo; Q e E giram
     45°; setas/WASD e botão do meio (ou Espaço + arrastar) andam. Clicar, arrastar base, seleção por
     caixa, clique direito e o minimapa funcionam igual. Sem WebGL, o app avisa e fica na vista atual.
+    Se a placa de vídeo travar com o 3D aberto (o driver reinicia o contexto WebGL), o mapa passa
+    sozinho para a vista de cima e avisa; `V` volta ao 3D quando a placa devolver o contexto.
   - É sempre o mesmo mundo: estradas, caminhos e posições vêm da simulação do mapa; as vistas só
     desenham.
 - **Borda do mapa** (Configurações › Exibição): **Muralha** (padrão: muro de pedra alto e grosso,
@@ -371,6 +402,13 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   e no 3D a mata continua do lado de fora). Com a muralha, o lado de fora fica em campo aberto, sem
   árvores. Vale nas três vistas; a escolha fica salva com o mapa. Mapas salvos antes, quando a
   floresta era o padrão, passam a abrir com a muralha.
+- **Mapa simplificado** (botão ao lado do ⛶ nos controles do canto superior direito, ou
+  Configurações › Exibição): o mesmo mapa, em qualquer vista, sem os
+  detalhes finos. Ficam o terreno, as estradas, o rio, o Centro da Cidade, a mina, a forja, o sino e
+  os aldeões; saem árvores, arbustos e pedras, a muralha da borda, a vila que a base cresceu (casas,
+  campos, castelo), estandartes e maravilhas, as sombras e a noite (é sempre meio-dia). O mapa
+  desenha a metade dos quadros e, no 3D, sem sombras e em resolução 1×: o app gasta cerca de metade
+  do processador. Liga e desliga na hora; a escolha fica salva.
 - **Só o mapa** (tecla `F` ou ⛶ nos controles): esconde a coluna de comando e o painel, e o mapa
   ocupa a janela inteira. Os recursos, o aldeão ocioso e os controles continuam por cima do mapa.
 - **Recolher o painel** (» no topo do painel ou Ctrl+B): o painel vira uma faixa fina com "Agentes";
@@ -517,14 +555,22 @@ com que você o equipa e traz **missões** para as bases. Ele não é uma sessã
   recolhe ou mostra a lista (▾/▸), e o app lembra a escolha.
 - **Equipar** (aba Equipamento, a janela de equipamento do Ragnarok): o cavaleiro no meio (com o
   mapa em 3D, ele aparece em 3D, a cavalo, girando devagar) e os espaços em volta. Clique num espaço para editá-lo embaixo da janela; Salvar equipamento guarda
-  tudo.
+  tudo, e fechar o painel também guarda (se algo não puder ser salvo, ele fica aberto dizendo o
+  porquê). **Desfazer** volta ao que estava salvo. Ao escrever o que ler num conector desligado, ele
+  já liga sozinho.
   - **Escudo, Lança, Capa e Botas** levam os conectores da sua conta do Claude (claude.ai ›
     Configurações › Conectores), só para ler: nunca envia, escreve nem apaga nada. Qualquer conector
     vai em qualquer um deles: clique no espaço e escolha. **Slack**: canais
     (`#ac-tickets, #dev-bug-report`); **Gmail**: uma busca (`label:clientes is:unread`); **Notion**:
-    páginas ou bancos; **Google Drive**: pastas ou documentos.
+    páginas ou bancos; **Google Drive**: pastas ou documentos; **Google Calendar**: agendas (`primary`
+    é a sua), de onde ele lê a descrição das reuniões que já aconteceram.
   - **Elmo, Viseira e Penacho** são as **skills** de `~/.claude/skills`, que guiam como ele julga e
-    escreve as missões. A Viseira abre no nível 3 e o Penacho no 5.
+    escreve as missões. A Viseira abre no nível 3 e o Penacho no 5. Num espaço vazio, escolha a
+    skill na lista (com muitas, use **Buscar skill**). Com uma skill no espaço, você vê quanto ela
+    pesa em cada ronda (acima de 8.000 caracteres ele lê só o começo) e pode **Editar
+    instruções**: o texto do SKILL.md abre ali mesmo e é salvo junto com o equipamento. A mudança
+    vale também para o seu Claude Code. Se o arquivo mudou fora do painel, ele não sobrescreve:
+    clique em **Desfazer** e abra de novo.
   - **Anel e Amuleto** são as **rotinas**, na aba **Rotinas**: uma linha cada, com a próxima ronda
     ("amanhã 09:00"), o horário e as fontes que lê. **Editar** abre Nome, Quando, Lê (quais fontes
     ligadas ela lê) e Procura (o prompt daquela rotina); **Rodar agora** faz a ronda fora do horário.
@@ -533,9 +579,30 @@ com que você o equipa e traz **missões** para as bases. Ele não é uma sessã
     na semana), VIT (rondas com relatório), INT (skills), DES (das missões que você decidiu, quantas
     levou) e SOR (missões urgentes achadas).
   - **Bolsa**: todos os conectores vinculados ao seu Claude e as suas skills. Os conectores que ele
-    ainda não sabe usar só para leitura aparecem apagados.
+    ainda não sabe usar só para leitura aparecem apagados, "sem leitura segura ainda".
+  - **Conectores próprios**: para um conector que o app não traz (o MCP da sua empresa, por
+    exemplo), crie `~/.config/dev.fontenele.agent-of-empires/scout-connectors.json` e reabra o app.
+    O arquivo fica na sua máquina, fora do repositório. Cada conector diz o nome igual ao do
+    claude.ai, as ferramentas que só leem (`tools`), as que escrevem (`denied`, opcional), os
+    domínios aceitos nos links das missões (`hosts`) e como ler (`how`, com `{targets}`,
+    `{since_iso}` e `{since_secs}`):
+
+    ```json
+    [{
+      "id": "acme", "name": "Acme Métricas", "label": "Métricas", "placeholder": "churn, uso",
+      "tools": ["mcp__claude_ai_Acme_M_tricas__run_metric"],
+      "hosts": ["admin.acme.com"],
+      "how": "Metrics: {targets}. Run them with run_metric. Source link: https://admin.acme.com/..."
+    }]
+    ```
+
+    O app recusa ferramenta de outro conector, servidor inteiro, curinga ou ferramenta própria do
+    Claude Code (Bash, Write…), e domínio que não seja um nome simples. Se o arquivo tiver erro,
+    ele fica de fora inteiro e o painel diz o porquê. Tirar um conector do arquivo também o tira
+    do equipamento.
 - **Habilidades** (aba): o que ele sabe fazer, as regras de toda ronda e o texto exato que ele
-  recebe na próxima ronda.
+  recebe na próxima ronda. Fontes, skills e rotinas têm **Editar**, e um espaço de skill livre tem
+  **Equipar**: o botão leva direto ao lugar certo.
 - **Na barra lateral** ele é o personagem principal: retrato, nível, XP, o que está fazendo e quando
   sai de novo, o que carrega e as sugestões de missão para treinar um aldeão.
 - **Uma ronda**: Enviar batedor (ou uma rotina). O cavaleiro sai pela estrada principal e some na
@@ -567,16 +634,26 @@ botão fica verde, com um ponto.
   no Tailscale, nos dois) e aponte a câmera para o QR code. A página abre já conectada; dá para pôr
   na tela inicial. Com Wi-Fi e Tailscale ligados, escolha a rede que o QR mostra.
 - **No celular**: no topo, quem precisa de você (Aprovar / Negar, ou as opções de uma pergunta);
-  embaixo, os agentes, primeiro os travados, depois os que esperam sua vez. **Responder** aparece nos
-  agentes que rodam aqui no app quando é a vez deles; os do Cursor ou do terminal pedem resposta lá.
+  embaixo, os agentes, primeiro os travados, depois os que esperam sua vez. **Responder** aparece em todo
+  agente parado. Num agente do Cursor ou do terminal, responder traz a conversa para o app: o
+  processo de lá é encerrado e a mesma sessão continua aqui, já com a sua mensagem. Para voltar,
+  use **Mover para o Cursor** no computador.
+- **Aprovar tudo** também está no celular, no topo: é o mesmo interruptor do mapa, e os dois mostram
+  quanto falta. Perguntas e planos continuam com você. Perguntas com várias escolhas dos agentes do
+  app respondem-se no celular; as dos agentes do Cursor, só no Cursor.
   **+ Novo agente** escolhe um projeto da lista e põe um agente para trabalhar aqui no app. O celular
   vibra quando chega pedido novo.
 - **Segurança**: só aparelhos da sua rede ou do Tailscale, e só com o código do QR. Quem tiver o
-  link comanda os agentes, então não compartilhe. **Trocar o código** desconecta o celular pareado;
-  desligar fecha a porta na hora. A conexão na rede local não é criptografada: em Wi-Fi público, use
+  link comanda os agentes, então não compartilhe. **Invalidar código** (dois cliques) corta na
+  hora todo celular pareado, e o QR passa a ter um código novo. Em **O código vale por**, escolha
+  sem prazo, 1, 7 ou 30 dias, contados a partir da escolha e de cada código novo: vencido, o celular
+  para de funcionar e o painel já mostra o QR novo. Desligar fecha a porta na hora. A conexão na rede local não é criptografada: em Wi-Fi público, use
   só pelo Tailscale.
 - **Não abriu?** Confira se estão na mesma rede e se o firewall do computador libera a porta que o
   painel mostra (47380/TCP por padrão).
+- **Fora de casa**: com um túnel até a porta do painel (Cloudflare Tunnel, por exemplo), escreva o
+  domínio em **Endereço na internet**. O QR passa a mostrar a rede "Internet", que funciona em
+  qualquer lugar, com HTTPS. Ponha login no túnel (Cloudflare Access): sem ele, só o código protege.
 
 ## Instalar e rodar
 
@@ -607,6 +684,7 @@ layout do mapa, no armazenamento local do app.
 | `~/.claude/projects/<repo>/*.jsonl` (só os `timestamp`) | horas de agente da semana (comida), o total em disco (XP); sessão numa subpasta conta para o repositório |
 | `~/.claude/projects/<repo>/*.jsonl` e `subagents/` (o `usage` das respostas) | tokens da semana, da janela de 5 h do plano e por dia (História) |
 | `git log --since=30.days.ago` | commits por dia para a História |
+| `/proc/<pid>/fdinfo` dos processos utilitários do Cursor e do VS Code (os watches inotify) | quais pastas têm janela do editor aberta: a base fica ativa |
 
 Uma thread em Rust confere tudo a cada 1 s, lendo só os bytes novos de cada transcript, e emite
 o evento `snapshot` para a janela apenas quando algo muda. `CLAUDE_CONFIG_DIR` troca a pasta base.

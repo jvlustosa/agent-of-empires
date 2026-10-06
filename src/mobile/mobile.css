@@ -117,6 +117,32 @@ h2 {
   color: var(--muted);
 }
 
+.auto {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.auto.is-on {
+  border-color: var(--allow);
+}
+
+.auto-text {
+  flex: 1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.auto.is-on .auto-text {
+  color: var(--text);
+}
+
 .list {
   display: flex;
   flex-direction: column;

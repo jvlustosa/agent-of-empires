@@ -30,6 +30,7 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const SNAPSHOT_EVENT: &str = "snapshot";
 const APPROVALS_EVENT: &str = "approvals";
+const AUTO_APPROVE_EVENT: &str = "auto_approve";
 const HOSTED_EVENT: &str = "hosted";
 // A hosted agent handed to Cursor must exit first, or two processes would drive one session.
 const HANDOFF_WAIT: Duration = Duration::from_secs(8);
@@ -250,6 +251,13 @@ async fn project_preview(path: String) -> Result<projects::Preview, String> {
 async fn get_empire(app: AppHandle) -> empire::Empire {
     let session_start = app.state::<LatestUsage>().0.lock().ok().and_then(|latest| latest.as_ref()?.session_start());
     tauri::async_runtime::spawn_blocking(move || empire::empire(session_start)).await.unwrap_or_default()
+}
+
+/// Which of these folders have a Cursor (or VS Code) window open, by the editor's name: a base
+/// counts as active then, even with no agent in it.
+#[tauri::command]
+async fn editor_folders(folders: Vec<String>) -> std::collections::HashMap<String, &'static str> {
+    tauri::async_runtime::spawn_blocking(move || editor::open_folders(&folders)).await.unwrap_or_default()
 }
 
 #[tauri::command]
@@ -593,10 +601,11 @@ fn main() {
         .manage(music::Music::default())
         .invoke_handler(tauri::generate_handler![
             play_sound, set_music, set_music_volume, set_music_station, skip_music_track, get_music_track, get_snapshot, refresh_snapshot, open_session, get_approvals, resolve_approval, set_auto_approve, get_auto_approve, list_projects, project_preview, get_empire, deploy_agent, end_session, get_usage, refresh_usage,
-            get_hosted, send_to_agent, move_to_cursor, list_sessions, resume_session,
-            onboarding::get_config, onboarding::get_setup, onboarding::set_projects_root, onboarding::finish_setup, onboarding::set_usage_on,
-            scout::get_scout, scout::list_scout_skills, scout::list_scout_connectors, scout::run_routine, scout::scout_prompt, scout::set_scout_equipment, scout::set_scout_village, scout::start_scout, scout::set_mission_status,
-            scout::open_mission_source, phone::get_phone, phone::set_phone, phone::reset_phone_token])
+            get_hosted, send_to_agent, move_to_cursor, list_sessions, resume_session, editor_folders,
+            onboarding::get_config, onboarding::get_setup, onboarding::set_projects_root, onboarding::add_repo, onboarding::finish_setup, onboarding::set_usage_on,
+            scout::get_scout, scout::list_scout_skills, scout::read_scout_skill, scout::save_scout_skill, scout::list_scout_connectors, scout::list_scout_extra_connectors, scout::run_routine, scout::scout_prompt, scout::set_scout_equipment, scout::set_scout_village, scout::start_scout, scout::set_mission_status,
+            scout::open_mission_source, phone::get_phone, phone::set_phone, phone::reset_phone_token,
+            phone::set_phone_public_url, phone::set_phone_token_lifetime])
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             scout::init(&config_dir);
@@ -608,6 +617,7 @@ fn main() {
                 if let Err(err) = sync_autostart(&handle) {
                     eprintln!("[setup] failed to refresh autostart: {err}");
                 }
+                onboarding::refresh_permission_hook();
             }
             let approvals = start_approval_server(&handle);
             let emitter = handle.clone();

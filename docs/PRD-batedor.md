@@ -40,15 +40,17 @@ líder: a única unidade que não é sessão, nunca vai embora e responde pelo c
   configuração do usuário.
 - **Leve.** Pixel art desenhada em código no 2D e no ISO. No 3D, o cavalo do Quaternius (232 KB,
   uma malha pintada por paleta) e o cavaleiro do KayKit que os aldeões já usam, mais quatro texturas
-  pequenas (escudo, flâmula, pergaminho, aura) sem mipmaps; até os modelos carregarem, primitivas.
+  pequenas (escudo, bandeira, pergaminho, aura) sem mipmaps; até os modelos carregarem, primitivas.
 
 ## Como funciona
 
 ### No mapa
 
-- **O cavaleiro**: cavalo branco com manta berinjela e barra dourada, lança erguida com flâmula nas
-  quatro cores do Slack, penacho vermelho e o escudo com o logo, que nunca sai espelhado. A armadura
-  acompanha o nível: couro (1 e 2), ferro (3 e 4), aço (5 e 6), ouro (7). Nas três vistas. No 3D,
+- **O cavaleiro**: cavalo branco com manta berinjela e barra dourada, lança erguida com a bandeira
+  do ChatJurídico (o balão azul com a marca branca, 7 x 8 px no mapa e o dobro de detalhe no painel
+  e no 3D, onde a lança é mais alta para a bandeira passar do capacete), penacho vermelho e o escudo
+  com o logo do Slack, que nunca sai espelhado. A armadura acompanha o nível: couro (1 e 2), ferro
+  (3 e 4), aço (5 e 6), ouro (7). Nas três vistas. No 3D,
   o cavalo galopa no passo do 2D, fica parado ou pasta de vez em quando, e o cavaleiro do KayKit
   monta com as pernas abertas em volta do lombo; lança, escudo e penacho vão presos aos ossos dele.
 - **A aura**, sempre ligada: brilho dourado e anel no chão, pulsando, com faíscas girando e partículas
@@ -96,16 +98,33 @@ líder: a única unidade que não é sessão, nunca vai embora e responde pelo c
     levam conectores, qualquer um em qualquer espaço, escolhido pelo usuário (o Slack vai no Escudo,
     onde está o logo); Anel e Amuleto, as rotinas; a Armadura não se equipa, vem com o nível. Clicar
     num espaço abre o editor dele embaixo da janela: num de conector, a lista do que dá para pôr ali,
-    o que ler, ligar e desligar, trocar ou tirar. Embaixo, o **Status**,
+    o que ler, ligar e desligar, trocar ou tirar. Escrever o primeiro alvo liga o conector e apagar
+    todos desliga (sem alvo o interruptor fica travado). A edição é fluida: o painel se redesenha a
+    cada mudança, mas o foco e o cursor voltam ao mesmo controle, o primeiro clique depois de digitar
+    não se perde, e uma ronda que termina no meio da digitação não tira o campo. Equipamento e
+    Rotinas dividem um rascunho só: cada aba mostra o que a outra mudou. "Alterações por salvar" só
+    aparece com mudança de verdade (desfazer à mão limpa); **Salvar** fica apagado sem mudança,
+    **Desfazer** volta ao salvo, e fechar o painel salva (se não der, fica aberto com o motivo).
+    Embaixo, o **Status**,
     com os seis atributos do Ragnarok contando coisas reais: FOR (missões levadas), AGI (rondas em
     7 dias), VIT (rondas com relatório), INT (skills equipadas), DES (das missões decididas, quantas
     você levou), SOR (missões urgentes achadas); ao lado, nível, XP, missões, fontes, rotinas e o
     tamanho da aldeia.
   - **Bolsa**: os conectores vinculados à sua conta do Claude, lidos da lista que o Claude Code
     guarda em `.claude.json` (`claudeAiMcpEverConnected`, só os nomes). Os que o batedor sabe
-    carregar (Slack, Gmail, Notion, Google Drive) vão para um espaço livre com um clique; os outros, apagados, "sem
+    carregar (Slack, Gmail, Notion, Google Drive, Google Calendar e os de `scout-connectors.json`) vão para um espaço livre com um clique; os outros, apagados, "sem
     leitura segura ainda", até alguém mapear quais ferramentas deles só leem. Embaixo, as skills de
     `~/.claude/skills`, que um clique equipa no próximo espaço livre da cabeça.
+  - **Espaço de skill** (Elmo, Viseira, Penacho): vazio, a lista das skills, com busca a partir de 7
+    skills (sem acento, nome e descrição; a mesma busca filtra a Bolsa). Equipado, o nome, a
+    descrição, o peso na ronda ("5.970 caracteres: ≈ 1.493 tokens em cada ronda", em amarelo quando
+    passa dos 8.000 que a ronda lê) e **Editar instruções**; a lista vai para "Trocar por outra
+    skill", recolhida, como nos conectores. O editor abre o SKILL.md sem o front matter numa caixa de
+    texto. O texto entra no mesmo rascunho do equipamento (Salvar, Desfazer, fechar salva) e o aviso
+    diz qual skill falta salvar. `save_scout_skill` regrava o arquivo com o mesmo front matter, numa
+    troca atômica no arquivo real (se for link, continua link), e recusa se ele mudou desde que o
+    painel o abriu: um editor ou um instalador não perdem o que escreveram. Fechar o editor e abrir
+    de novo relê o arquivo quando não há nada por salvar.
 - **Rotinas**: uma linha por rotina, de propósito enxuta: nome e uma frase com a próxima ronda
   ("hoje 14:00", "amanhã 09:00", "seg 09:00"), o horário e as fontes que lê; o interruptor, **Rodar
   agora** (a ronda fora do horário) e **Editar**. Editar abre um formulário de quatro linhas: Nome,
@@ -116,7 +135,9 @@ líder: a única unidade que não é sessão, nunca vai embora e responde pelo c
 - **Habilidades**: o que ele sabe fazer em português claro (cada fonte que lê, cada skill com a
   descrição, triagem, roteamento, tarefa pronta, memória, rotinas), as regras de toda ronda e as
   **instruções completas**: o texto exato que ele recebe na próxima ronda, montado pelo backend
-  (`scout_prompt`), sem rodar nada.
+  (`scout_prompt`), sem rodar nada. O que vem do equipamento tem um botão: cada fonte e cada skill,
+  **Editar** (a skill já abre nas instruções); cada espaço de skill livre, **Equipar**; as rotinas,
+  **Editar** na aba Rotinas. A lista mostra o rascunho, como a janela de equipamento.
 - **Diário**: cada ronda, missão levada e missão descartada, com a experiência que rendeu.
 
 ### Uma ronda
@@ -159,6 +180,10 @@ missão crítica ou alta manda notificação do sistema.
 | 3 | Equipamento: Gmail e Notion, skills, rotinas com notificação | **Concluída** em 2026-10-03 |
 | 4 | Diário, experiência e níveis; aprende com missões levadas e descartadas | **Concluída** em 2026-10-03 |
 | 4b | Equipamento no desenho do Ragnarok em pixel art, conectores em qualquer espaço, Google Drive, rotinas como fluxo, aba Habilidades com o prompt exato, personagem principal na barra lateral | **Concluída** em 2026-10-04 |
+| 4c | Edição fluida do equipamento e das rotinas: foco preservado, clique depois de digitar, abas em sincronia, salvar ao fechar, Desfazer, "Ver o texto completo" depois de salvar | **Concluída** em 2026-10-04 |
+| 4d | Bandeira do ChatJurídico na lança, no lugar da flâmula com as cores do Slack, nas três vistas e no painel | **Concluída** em 2026-10-04 |
+| 4e | Equipar e editar skills: busca, peso de cada uma na ronda, instruções editadas no painel (mesmo rascunho do equipamento), atalhos na aba Habilidades | **Concluída** em 2026-10-04; falta salvar uma skill de verdade no app |
+| 4f | Google Calendar (reuniões que já aconteceram; link reescrito para calendar.google.com, porque o redirecionador de google.com abriria qualquer site) e conectores próprios em `scout-connectors.json`, na pasta de config e fora do repositório: só ferramentas do próprio conector, domínios simples, arquivo com erro fica de fora inteiro | **Concluída** em 2026-10-04; falta uma ronda real com eles |
 | 5 | **Prestar contas**: o líder acompanha o aldeão e responde a quem pediu | Proposta: a próxima |
 | 6 | Convocar a tropa: missão de várias bases vira um esquadrão com um briefing só | Ideia |
 | 7 | Alerta na hora por Socket Mode, para crítico, sem esperar a ronda | Ideia |
@@ -171,6 +196,14 @@ missão crítica ou alta manda notificação do sistema.
   headless com um backend Tauri falso).
 - [x] A ronda no mapa: praça, base com missão crítica, a outra base, volta pela aldeia.
 - [x] As três abas do painel, os interruptores e o botão na barra de baixo.
+- [x] Etapa 4c: 38 checagens com clique e teclado de verdade (Chrome headless, backend falso que
+  imita `check_equipment`). O clique perdido depois de digitar e o "Ver o texto completo" vazio
+  foram reproduzidos no código anterior antes da correção.
+- [x] Etapa 4e: no Rust, um teste novo (o front matter fica intacto ao salvar) e uma checagem a mais
+  na leitura (um corpo que começa com lista "- " não perde mais o traço); dez cenários no Chrome headless
+  com backend falso: busca no espaço e na Bolsa, editor com foco, aviso por salvar, salvar, skill
+  acima de 8.000, Editar e Equipar a partir de Habilidades. A suíte inteira (92) passa.
+- [ ] Salvar uma skill de verdade no app (Tauri) e conferir o SKILL.md no disco.
 - [ ] **Ronda de verdade no app**, contra o Slack. Não testada aqui: `--restricted` junto com os
   conectores do claude.ai não foi conferido (o modo automático bloqueou o teste com `claude`
   aninhado). Se o batedor voltar dizendo que não achou o Slack, é por aí que se começa.

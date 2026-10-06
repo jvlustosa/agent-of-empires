@@ -347,11 +347,23 @@ export class World3D {
     this.canvas.className = 'world-3d';
     container.insertBefore(this.canvas, container.querySelector('.world-overlay'));
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.shadowMap.enabled = true;
+    this.isSimple = empire.isSimple;
+    this.renderer.setPixelRatio(this.pixelRatio());
+    this.renderer.shadowMap.enabled = !this.isSimple;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
+    // A GPU hang resets the context (i915 does it to WebKit) and three.js stops drawing: without this
+    // the 3D map stays blank until the app restarts, so the empire carries on in 2D meanwhile.
+    this.isContextLost = false;
+    this.canvas.addEventListener('webglcontextlost', () => {
+      this.isContextLost = true;
+      empire.onContextLost();
+    });
+    this.canvas.addEventListener('webglcontextrestored', () => {
+      this.isContextLost = false;
+      this.markStatic();
+    });
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(MAP_BACKGROUND);
     this.scene.fog = new THREE.Fog(MAP_BACKGROUND, 900, 2200);
@@ -452,6 +464,21 @@ export class World3D {
     const tip = this.mesh(new THREE.ConeGeometry(radius * 0.36, height * 0.34, 12), this.mat(SNOW), { cast: false });
     tip.position.y = base + height * 0.83 + 0.1;
     return tip;
+  }
+
+  pixelRatio() {
+    return this.isSimple ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+  }
+
+  /** Simplified map: no shadows, 1x pixels, no grass, woods, border wall or grown villages. */
+  setSimple(isOn) {
+    this.isSimple = isOn;
+    this.renderer.shadowMap.enabled = !isOn;
+    this.renderer.setPixelRatio(this.pixelRatio());
+    this.scene.traverse((object) => {
+      for (const material of [object.material ?? []].flat()) material.needsUpdate = true; // shadows on or off take a recompile
+    });
+    this.markStatic(); // the bases rebuild on their own: the mode is part of their key
   }
 
   setActive(isActive) {
@@ -623,9 +650,11 @@ export class World3D {
     this.staticGroup.clear();
     const { w, h } = this.worldSize;
     this.staticGroup.add(this.buildTerrain(w, h));
-    this.staticGroup.add(this.buildGrass(w, h));
-    this.staticGroup.add(this.buildWoods(w, h));
-    if (this.empire.borderWall) this.staticGroup.add(this.buildBorderWall(this.empire.borderWall));
+    if (!this.isSimple) {
+      this.staticGroup.add(this.buildGrass(w, h));
+      this.staticGroup.add(this.buildWoods(w, h));
+      if (this.empire.borderWall) this.staticGroup.add(this.buildBorderWall(this.empire.borderWall));
+    }
     this.staticGroup.add(this.buildRiver(w));
     this.staticGroup.add(this.buildSquare());
     this.staticGroup.add(this.buildFog());
@@ -1994,8 +2023,8 @@ export class World3D {
     p.renderer.setSize(width, height, false);
     p.camera.aspect = width / height;
     p.camera.updateProjectionMatrix();
-    p.camera.position.set(0, 30, 58); // horse and lance fill the window
-    p.camera.lookAt(0, 17, 0);
+    p.camera.position.set(0, 33, 73); // horse and lance fill the window
+    p.camera.lookAt(0, 19, 0);
     p.renderer.render(p.scene, p.camera);
   }
 
@@ -2030,14 +2059,14 @@ export class World3D {
     const [cx, cz] = [plan.core.x, plan.core.y];
     const toCore = ([x, y]) => [x - cx, y - cz];
     const keep = plan.buildings.find((b) => b.kind === 'keep');
-    const bailey = plan.walls && { path: plan.walls.map(toCore), towers: plan.towers.map(toCore), keep: keep && { ...keep, x: keep.x - cx, y: keep.y - cz } };
+    const bailey = !this.isSimple && plan.walls && { path: plan.walls.map(toCore), towers: plan.towers.map(toCore), keep: keep && { ...keep, x: keep.x - cx, y: keep.y - cz } };
     // town center: center of its 2D box, front facing the yard (turned and sized as designed, grown
     // with the land)
     const { group: castle, tc } = this.buildCastle({ ...design, growth: plan.growth }, base.team, bailey, lay.tc);
     castle.userData.hit = { project: base.project };
     castle.position.set(cx, 0, cz);
     group.add(castle);
-    const land = this.buildLand(plan, design, base.team);
+    const land = this.isSimple ? { group: new THREE.Group(), glass: new THREE.MeshStandardMaterial(), sails: [] } : this.buildLand(plan, design, base.team);
     parts.villageGlass = land.glass;
     parts.sails = land.sails;
     group.add(land.group);
@@ -2122,6 +2151,10 @@ export class World3D {
     parts.glow = new THREE.Mesh(new THREE.PlaneGeometry(plan.w, plan.h), new THREE.MeshBasicMaterial({ color: LINK_COLOR, transparent: true, opacity: 0, depthWrite: false }));
     parts.glow.rotation.x = -Math.PI / 2;
     parts.glow.position.set(plan.w / 2, 0.4, plan.h / 2);
+    // a quiet base's land in shade (over the fields, under whatever stands)
+    parts.shade = new THREE.Mesh(new THREE.PlaneGeometry(plan.w, plan.h), new THREE.MeshBasicMaterial({ color: S.PLOT_SHADE.color, transparent: true, opacity: S.PLOT_SHADE.alpha, depthWrite: false }));
+    parts.shade.rotation.x = -Math.PI / 2;
+    parts.shade.position.set(plan.w / 2, 0.7, plan.h / 2);
     // wonders: lasting monuments for milestones of work
     const wonders = this.empire.wondersOf(base.project);
     if (wonders.includes('obelisk')) {
@@ -2152,7 +2185,7 @@ export class World3D {
     parts.beam = new THREE.Mesh(new THREE.CylinderGeometry(9, 14, 140, 20, 1, true), new THREE.MeshBasicMaterial({ color: '#fde68a', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
     parts.beam.position.set(cx + lay.tc.x + lay.tc.w / 2, 70, cz + lay.tc.y + lay.tc.h / 2 + 4);
     parts.beam.visible = false;
-    group.add(mine, forge, banner, fence, parts.bell, parts.territory, parts.glow, parts.beam);
+    group.add(mine, forge, banner, fence, parts.bell, parts.territory, parts.glow, parts.shade, parts.beam);
     parts.tc = tc;
     parts.castle = castle;
     parts.team = [team, teamShade];
@@ -2177,7 +2210,7 @@ export class World3D {
     for (const base of e.bases.values()) {
       seen.add(base.project);
       const design = e.designOf(base.project);
-      const key = `${design.era}|${design.style}|${design.form}|${design.size}|${design.rotation}|${design.width}x${design.depth}x${design.height}|${S.isPalisade(design)}|${base.team[0]}|${e.wondersOf(base.project).join(',')}|${base.size.w}x${base.size.h}+${base.coreX}`;
+      const key = `${design.era}|${design.style}|${design.form}|${design.size}|${design.rotation}|${design.width}x${design.depth}x${design.height}|${S.isPalisade(design)}|${base.team[0]}|${e.wondersOf(base.project).join(',')}|${base.size.w}x${base.size.h}+${base.coreX}|${this.isSimple}`;
       let entry = this.bases.get(base.project);
       const isResizing = e.drag?.kind === 'resize' && e.drag.project === base.project;
       if (!entry || (entry.key !== key && !(isResizing && now - entry.builtAt < RESIZE_REBUILD_MS))) {
@@ -2191,9 +2224,11 @@ export class World3D {
       const rise = Math.min(1, Math.max(0, (now - base.foundedAt) / 1400));
       parts.tc.scale.y = Math.max(0.02, rise);
       const isAlarm = alarm.has(base.project);
+      const isActive = e.isBaseActive(base.project);
       const isPicked = (e.baseHighlight?.project === base.project && now < e.baseHighlight.until) || linked.has(base.project) || e.summonTarget === base.project;
-      parts.territory.material.color.set(isAlarm ? kindInfo('asking').color : base.team[0]);
+      parts.territory.material.color.set(isAlarm ? kindInfo('asking').color : isActive ? base.team[0] : S.QUIET_BORDER);
       parts.territory.material.opacity = isAlarm ? 0.55 + 0.45 * Math.sin(t * 7) : 0.9;
+      parts.shade.visible = !isActive;
       parts.glow.material.opacity = isPicked ? 0.1 + 0.08 * Math.sin(t * 6) : isAlarm ? 0.06 + 0.06 * Math.sin(t * 7) : 0;
       parts.glow.material.color.set(isPicked ? LINK_COLOR : kindInfo('asking').color);
       parts.bell.visible = isAlarm && rise === 1;
@@ -2201,7 +2236,10 @@ export class World3D {
       const isForging = busy.get(base.project)?.has('forge');
       parts.fire.material.emissiveIntensity = (isForging ? 2.2 : 1) + 0.4 * Math.sin(t * 13);
       parts.forgeLight.intensity = (sky.isNight ? 1 : 0.15) * (isForging ? 900 : 350);
-      parts.flag.rotation.y = Math.sin(t * 2.4 + base.pos.x) * 0.35;
+      // a quiet base's flag hangs limp at the foot of the pole
+      parts.flag.rotation.y = isActive ? Math.sin(t * 2.4 + base.pos.x) * 0.35 : 0;
+      parts.flag.position.y = isActive ? 22 : 9;
+      parts.flag.scale.set(isActive ? 1 : 0.35, isActive ? 1 : 1.3, 1);
       for (const hub of parts.sails) hub.rotation.z = -(t * 0.9 + hub.userData.phase);
       if (parts.beaconLight) parts.beaconLight.intensity = sky.isNight ? 1200 : 200;
       // the age-up beam: a column of gold light over the town center for a few seconds
@@ -2469,9 +2507,10 @@ export class World3D {
     return { group, parts: { horse } };
   }
 
-  // O Batedor: a barded horse, a rider in armor of its level (look.tunic), the lance raised with its
-  // pennant, and the shield with the Slack mark painted from the same pixels as the 2D one. With the
-  // models loaded, the horse and the KayKit knight (tabard and cape aubergine), else blocks.
+  // O Batedor: a barded horse, a rider in armor of its level (look.tunic), the lance raised with the
+  // ChatJurídico pennant, and the shield with the Slack mark, both painted from the same pixels as the
+  // 2D ones. With the models loaded, the horse and the KayKit knight (tabard and cape aubergine), else
+  // blocks.
   buildKnight(look) {
     const rider = villagerModel(look, { character: 'knight', hat: true, paint: { team: S.SLACK.aubergine, armor: look.tunic, skin: look.skin, hair: look.hair } });
     const mount = this.buildMount(look, rider);
@@ -2484,13 +2523,13 @@ export class World3D {
     // lance, shield and plume ride the rider's bones, set where its idle holds them
     playClip(parts.rider, 'Idle', 0, 0);
     const at = (name) => bone(parts.rider.root, name).getWorldPosition(new THREE.Vector3());
-    const lance = this.mesh(new THREE.CylinderGeometry(0.3, 0.3, 24, 6), this.mat('#8a5a32'));
-    lance.position.copy(at('handslotr')).add(new THREE.Vector3(-1.2, 4, 0.4)); // upright at its right side, clear of the face
+    const lance = this.mesh(new THREE.CylinderGeometry(0.3, 0.3, 29, 6), this.mat('#8a5a32'));
+    lance.position.copy(at('handslotr')).add(new THREE.Vector3(-1.2, 6.5, 0.4)); // upright at its right side, clear of the face, the pennant over the helmet
     lance.rotation.x = 0.15;
     parts.pennant = new THREE.Group(); // the flag streams back from the lance's tip
-    parts.pennant.position.y = 10.6;
-    const pennant = this.mesh(new THREE.PlaneGeometry(4.4, 2.6), new THREE.MeshBasicMaterial({ map: this.knightTexture('pennant'), transparent: true, alphaTest: 0.5, side: THREE.DoubleSide }), { cast: false });
-    pennant.position.x = 2.2;
+    parts.pennant.position.y = 11.9;
+    const pennant = this.mesh(new THREE.PlaneGeometry(4.2, 4.8), new THREE.MeshBasicMaterial({ map: this.knightTexture('pennant'), transparent: true, alphaTest: 0.5, side: THREE.DoubleSide }), { cast: false });
+    pennant.position.x = 2.1;
     parts.pennant.add(pennant);
     lance.add(parts.pennant);
     bone(parts.rider.root, 'handslotr').attach(lance);
@@ -2541,8 +2580,8 @@ export class World3D {
     lance.position.set(2.8, 22, 2);
     lance.rotation.x = 0.35;
     const flat = (map, w, h) => this.mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide }), { cast: false });
-    parts.pennant = flat(this.knightTexture('pennant'), 4.4, 2.6);
-    parts.pennant.position.set(2.8, 31.2, 4);
+    parts.pennant = flat(this.knightTexture('pennant'), 4.2, 4.8);
+    parts.pennant.position.set(2.8, 30.2, 4);
     const shield = flat(this.knightTexture('shield'), 4.2, 5.4);
     shield.position.set(-2.7, 14.5, 0);
     shield.rotation.y = -Math.PI / 2;
@@ -2555,7 +2594,7 @@ export class World3D {
   knightTexture(name) {
     this.knightTextures ??= new Map();
     if (!this.knightTextures.has(name)) {
-      const size = { shield: [7, 9], pennant: [4, 4], scroll: [10, 8], aura: [8, 8] }[name];
+      const size = { shield: [7, 9], pennant: [14, 16], scroll: [10, 8], aura: [8, 8] }[name];
       const canvas = document.createElement('canvas');
       [canvas.width, canvas.height] = size.map((side) => side * 8);
       const ctx = canvas.getContext('2d');
@@ -2563,7 +2602,7 @@ export class World3D {
       if (name === 'aura') S.drawGlow(ctx, 4, 4, 4, S.SLACK.yellow, 0.9);
       else if (name === 'shield') S.drawSlackShield(ctx, 0, 0);
       else if (name === 'scroll') S.drawMissionScroll(ctx, 5, 8);
-      else [S.SLACK.blue, S.SLACK.green, S.SLACK.yellow, S.SLACK.red].forEach((color, row) => S.rect(ctx, 0, row, 4, 1, color));
+      else S.drawChatJuridicoFlag(ctx, 0, 0, { isFine: true });
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
       const filter = name === 'aura' ? THREE.LinearFilter : THREE.NearestFilter; // the glow stays soft, the pixels sharp
@@ -3039,7 +3078,7 @@ export class World3D {
     this.applySky(sky);
     this.flame.scale.set(1 + 0.12 * Math.sin(t * 17), 1 + 0.2 * Math.sin(t * 13), 1);
     if (this.grassWind) this.grassWind.value = t;
-    if (this.water) this.water.map.offset.x = -t * RIVER.flow;
+    if (this.water && !this.isSimple) this.water.map.offset.x = -t * RIVER.flow;
     this.syncBases(now, t, sky);
     this.hasHeldOnTop = false;
     this.syncUnits(now, t);

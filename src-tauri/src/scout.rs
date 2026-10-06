@@ -27,6 +27,9 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 const STATE_FILE: &str = "scout.json";
+// Connectors the code does not ship (a company's own MCP), added by the user next to the state.
+const EXTRA_CONNECTORS_FILE: &str = "scout-connectors.json";
+const EXTRA_HOW_MAX: usize = 2000;
 // An empty folder to run in: no CLAUDE.md of a repository, and sessions there are not villagers.
 const WORK_DIR: &str = "scout";
 const SCOUT_EVENT: &str = "scout";
@@ -58,6 +61,9 @@ const WHY_MAX: usize = 300;
 // Below the 4000 of deploy_agent, so the user can still add to the task.
 const TASK_MAX: usize = 3000;
 const SKILL_MAX: usize = 8000;
+// What the panel may write back into a SKILL.md: room for long skills, no runaway paste.
+const SKILL_EDIT_MAX: usize = 100_000;
+const SKILL_GONE: &str = "Essa skill não está mais na pasta de skills do Claude";
 const JOURNAL_MAX: usize = 300;
 // Missions taken or turned down that the prompt recalls, each way.
 const LESSONS_MAX: usize = 15;
@@ -88,7 +94,7 @@ struct ConnectorSpec {
     how: &'static str,
 }
 
-const CONNECTORS: [ConnectorSpec; 4] = [
+const CONNECTORS: [ConnectorSpec; 5] = [
     ConnectorSpec {
         id: "slack",
         name: "Slack",
@@ -162,18 +168,87 @@ or edited after {since_iso}. Source label: Notion. Source link: the page URL.",
 {since_iso} that may hold a demand (feedback, a spec, a list of bugs). Source label: Drive. Source link: the file's web link \
 (https://docs.google.com/... or https://drive.google.com/...).",
     },
+    ConnectorSpec {
+        id: "calendar",
+        name: "Google Calendar",
+        tools: &[
+            "mcp__claude_ai_Google_Calendar__list_calendars",
+            "mcp__claude_ai_Google_Calendar__list_events",
+            "mcp__claude_ai_Google_Calendar__get_event",
+        ],
+        denied: &[
+            "mcp__claude_ai_Google_Calendar__create_event",
+            "mcp__claude_ai_Google_Calendar__update_event",
+            "mcp__claude_ai_Google_Calendar__delete_event",
+            "mcp__claude_ai_Google_Calendar__respond_to_event",
+        ],
+        // Not google.com: its /url redirect would let a link lead anywhere.
+        hosts: &["calendar.google.com"],
+        how: "Calendars: {targets} (primary is the user's own; for one given by name, find its ID with list_calendars). List \
+the meetings held since {since_iso} with list_events (startTime {since_iso}, endTime now) and read the descriptions that may \
+hold a demand (a client call, a bug review, a planning); open one with get_event only when the list is not enough. Skip \
+private and personal events, focus time and out of office. Source label: Agenda. Source link: \
+https://calendar.google.com/calendar/event?eid=<the eid of the event's htmlLink>.",
+    },
 ];
+
+/// A connector from scout-connectors.json, as the user writes it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExtraConnectorEntry {
+    id: String,
+    /// As claude.ai names it, which is how the bag finds it.
+    name: String,
+    #[serde(default)]
+    label: String,
+    #[serde(default)]
+    placeholder: String,
+    #[serde(default)]
+    hint: String,
+    tools: Vec<String>,
+    #[serde(default)]
+    denied: Vec<String>,
+    hosts: Vec<String>,
+    how: String,
+}
+
+/// What the panel shows of an extra connector; the built-in ones are described in scout.js.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtraConnectorInfo {
+    pub id: String,
+    pub name: String,
+    pub label: String,
+    pub placeholder: String,
+    pub hint: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtraConnectors {
+    pub connectors: Vec<ExtraConnectorInfo>,
+    /// Why the file was left out, for the panel to say.
+    pub error: Option<String>,
+}
+
+#[derive(Default)]
+struct Extras {
+    specs: Vec<ConnectorSpec>,
+    shown: ExtraConnectors,
+}
 
 static STATE_PATH: OnceLock<PathBuf> = OnceLock::new();
 static WORK_PATH: OnceLock<PathBuf> = OnceLock::new();
 // Load, change and save happen under it: a round can end while the user dismisses a mission.
 static STATE_LOCK: Mutex<()> = Mutex::new(());
 static IS_SCOUTING: AtomicBool = AtomicBool::new(false);
+static EXTRAS: OnceLock<Extras> = OnceLock::new();
 
 /// Called once at startup with the app's config folder.
 pub fn init(config_dir: &Path) {
     let _ = STATE_PATH.set(config_dir.join(STATE_FILE));
     let _ = WORK_PATH.set(config_dir.join(WORK_DIR));
+    let _ = EXTRAS.set(read_extras(&config_dir.join(EXTRA_CONNECTORS_FILE)));
 }
 
 /// The scout's own `claude` runs here; the map does not draw it as a villager.
@@ -317,6 +392,17 @@ pub struct LinkedConnector {
 pub struct SkillInfo {
     pub name: String,
     pub description: String,
+    /// Length of its instructions; a round reads up to SKILL_MAX of them.
+    pub chars: usize,
+}
+
+/// A skill's instructions (its SKILL.md without the front matter), opened in the panel to edit.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillText {
+    pub body: String,
+    /// The file it changes, with the home folder as "~".
+    pub path: String,
 }
 
 /// One mission as the scout reports it, before it is checked and merged.
@@ -365,6 +451,47 @@ pub async fn list_scout_skills() -> Vec<SkillInfo> {
     tauri::async_runtime::spawn_blocking(|| read_skills().into_iter().map(|(info, _)| info).collect()).await.unwrap_or_default()
 }
 
+#[tauri::command]
+pub async fn read_scout_skill(name: String) -> Result<SkillText, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (path, text) = find_skill(&name).ok_or(SKILL_GONE)?;
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+        let path = path.strip_prefix(&home).map_or_else(|_| path.display().to_string(), |rest| format!("~/{}", rest.display()));
+        Ok(SkillText { body: parse_skill(&text).2, path })
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// Writes a skill's instructions back under the same front matter, and lists the skills again.
+/// `original` is what the panel opened: if the file changed since (an editor, an installer), it is
+/// left alone rather than overwritten.
+#[tauri::command]
+pub async fn save_scout_skill(name: String, body: String, original: String) -> Result<Vec<SkillInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let body = body.trim();
+        if body.is_empty() {
+            return Err("A skill precisa de instruções".to_string());
+        }
+        if body.chars().count() > SKILL_EDIT_MAX {
+            return Err(format!("A skill passa de {SKILL_EDIT_MAX} caracteres"));
+        }
+        let (path, text) = find_skill(&name).ok_or(SKILL_GONE)?;
+        if parse_skill(&text).2 != original.trim() {
+            return Err("A skill mudou fora do painel: clique em Desfazer e abra de novo".to_string());
+        }
+        // Written where it really lives, so a linked SKILL.md stays a link.
+        let path = fs::canonicalize(&path).map_err(|err| err.to_string())?;
+        let temp = path.with_extension("md.tmp");
+        fs::write(&temp, with_skill_body(&text, body))
+            .and_then(|()| fs::rename(&temp, &path))
+            .map_err(|err| format!("Não consegui salvar a skill: {err}"))?;
+        Ok(read_skills().into_iter().map(|(info, _)| info).collect())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
 /// The connectors linked to the user's Claude account, its bag: Claude Code keeps their names in
 /// `.claude.json` (claudeAiMcpEverConnected). Only that list is read.
 #[tauri::command]
@@ -381,6 +508,12 @@ pub async fn list_scout_connectors() -> Vec<LinkedConnector> {
     .unwrap_or_default()
 }
 
+/// The connectors added in scout-connectors.json, read at startup.
+#[tauri::command]
+pub fn list_scout_extra_connectors() -> ExtraConnectors {
+    EXTRAS.get().map(|extras| extras.shown.clone()).unwrap_or_default()
+}
+
 fn linked_connectors(config: &Value) -> Vec<LinkedConnector> {
     let names = config.get("claudeAiMcpEverConnected").and_then(Value::as_array).cloned().unwrap_or_default();
     let mut linked: Vec<LinkedConnector> = names
@@ -388,7 +521,7 @@ fn linked_connectors(config: &Value) -> Vec<LinkedConnector> {
         .filter_map(Value::as_str)
         .filter_map(|name| name.strip_prefix("claude.ai "))
         .map(|name| {
-            let id = CONNECTORS.iter().find(|spec| spec.name.eq_ignore_ascii_case(name)).map(|spec| spec.id.to_string());
+            let id = specs().find(|spec| spec.name.eq_ignore_ascii_case(name)).map(|spec| spec.id.to_string());
             LinkedConnector { name: clip(name, 60), id }
         })
         .collect();
@@ -612,11 +745,20 @@ fn with_derived(state: ScoutState) -> ScoutState {
 }
 
 fn load() -> ScoutState {
-    STATE_PATH
+    let mut state: ScoutState = STATE_PATH
         .get()
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // A connector taken out of scout-connectors.json leaves the equipment. A routine left with none
+    // of its own sources stops, rather than reading every one (what an empty list means).
+    state.equipment.connectors.retain(|connector| spec(&connector.id).is_some());
+    for routine in &mut state.equipment.routines {
+        let had_sources = !routine.connectors.is_empty();
+        routine.connectors.retain(|id| spec(id).is_some());
+        routine.is_on &= !(had_sources && routine.connectors.is_empty());
+    }
+    state
 }
 
 fn save(state: &ScoutState) -> Result<(), String> {
@@ -657,8 +799,88 @@ fn skill_slots(level: u32) -> usize {
 
 // ---------- Equipment ----------
 
+/// The connectors it can carry: the built-in ones and those of scout-connectors.json.
+fn specs() -> impl Iterator<Item = &'static ConnectorSpec> + Clone {
+    CONNECTORS.iter().chain(EXTRAS.get().map_or(&[][..], |extras| extras.specs.as_slice()))
+}
+
 fn spec(id: &str) -> Option<&'static ConnectorSpec> {
-    CONNECTORS.iter().find(|spec| spec.id == id)
+    specs().find(|spec| spec.id == id)
+}
+
+/// A missing file adds nothing; a broken one is left out whole, and the panel says why.
+fn read_extras(path: &Path) -> Extras {
+    let Ok(text) = fs::read_to_string(path) else { return Extras::default() };
+    parse_extras(&text).unwrap_or_else(|err| {
+        let error = format!("{EXTRA_CONNECTORS_FILE} ficou de fora: {err}");
+        eprintln!("[scout] {error}");
+        Extras { specs: Vec::new(), shown: ExtraConnectors { connectors: Vec::new(), error: Some(error) } }
+    })
+}
+
+/// Checks each entry: a tool must belong to that connector (never a whole server, a wildcard or a
+/// built-in tool) and a host must be a plain name, since the links it allows are opened.
+fn parse_extras(text: &str) -> Result<Extras, String> {
+    let entries: Vec<ExtraConnectorEntry> = serde_json::from_str(text).map_err(|err| format!("JSON inválido ({err})"))?;
+    let mut extras = Extras::default();
+    for entry in entries {
+        let (id, name, how) = (entry.id.trim(), entry.name.trim(), entry.how.trim());
+        let is_valid_id = (1..=24).contains(&id.len()) && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        if !is_valid_id {
+            return Err(format!("o id \"{id}\" precisa de 1 a 24 letras minúsculas, números ou hífen"));
+        }
+        if name.is_empty() || CONNECTORS.iter().chain(&extras.specs).any(|spec| spec.id == id || spec.name.eq_ignore_ascii_case(name)) {
+            return Err(format!("o conector \"{id}\" precisa de um nome, e id e nome que nenhum outro use"));
+        }
+        if entry.tools.is_empty() || entry.hosts.is_empty() || how.is_empty() || how.chars().count() > EXTRA_HOW_MAX {
+            return Err(format!("o conector \"{id}\" precisa de tools, hosts e how (até {EXTRA_HOW_MAX} caracteres)"));
+        }
+        if let Some(tool) = entry.tools.iter().chain(&entry.denied).find(|tool| !is_connector_tool(name, tool)) {
+            return Err(format!("\"{tool}\" não é uma ferramenta do {name}"));
+        }
+        if let Some(host) = entry.hosts.iter().find(|host| !is_plain_host(host)) {
+            return Err(format!("\"{host}\" não é um domínio simples (ex.: admin.empresa.com)"));
+        }
+        let label = if entry.label.trim().is_empty() { "O que ler" } else { entry.label.trim() };
+        let info = ExtraConnectorInfo {
+            id: id.to_string(),
+            name: clip(name, 60),
+            label: clip(label, 40),
+            placeholder: clip(entry.placeholder.trim(), 120),
+            hint: clip(entry.hint.trim(), 300),
+        };
+        // Read once and kept for the app's life: leaked into the same 'static shape as the built-in ones.
+        let leak = |text: &str| -> &'static str { text.to_string().leak() };
+        extras.specs.push(ConnectorSpec {
+            id: leak(id),
+            name: leak(&info.name),
+            tools: entry.tools.iter().map(|tool| leak(tool)).collect::<Vec<_>>().leak(),
+            denied: entry.denied.iter().map(|tool| leak(tool)).collect::<Vec<_>>().leak(),
+            hosts: entry.hosts.iter().map(|host| leak(host)).collect::<Vec<_>>().leak(),
+            how: leak(how),
+        });
+        extras.shown.connectors.push(info);
+    }
+    Ok(extras)
+}
+
+/// `mcp__claude_ai_<name>__<tool>`, with the connector's name as Claude Code writes it: every
+/// character outside A-Z, a-z, 0-9, _ and - becomes _, one per UTF-16 unit.
+fn is_connector_tool(name: &str, tool: &str) -> bool {
+    let server: String = format!("claude.ai {name}")
+        .chars()
+        .flat_map(|c| {
+            let is_kept = c.is_ascii_alphanumeric() || c == '_' || c == '-';
+            std::iter::repeat_n(if is_kept { c } else { '_' }, if is_kept { 1 } else { c.len_utf16() })
+        })
+        .collect();
+    tool.strip_prefix(&format!("mcp__{server}__"))
+        .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+}
+
+fn is_plain_host(host: &str) -> bool {
+    let is_shaped = host.contains('.') && !host.starts_with('.') && !host.ends_with('.') && !host.contains("..");
+    is_shaped && host.len() <= 100 && host.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
 }
 
 fn check_equipment(equipment: Equipment, known_skills: &[String], slots: usize) -> Result<Equipment, String> {
@@ -723,21 +945,45 @@ fn check_equipment(equipment: Equipment, known_skills: &[String], slots: usize) 
     Ok(Equipment { connectors, skills, routines })
 }
 
-/// The user's skills: (name and description, instructions), from ~/.claude/skills/<name>/SKILL.md.
-fn read_skills() -> Vec<(SkillInfo, String)> {
+/// Each ~/.claude/skills/<folder>/SKILL.md: (path, folder, text).
+fn skill_files() -> Vec<(PathBuf, String, String)> {
     let Some(dir) = projects::claude_config_dir().map(|dir| dir.join("skills")) else { return Vec::new() };
     let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
-    let mut skills: Vec<(SkillInfo, String)> = entries
+    entries
         .filter_map(Result::ok)
         .filter_map(|entry| {
-            let text = fs::read_to_string(entry.path().join("SKILL.md")).ok()?;
-            let folder = entry.file_name().to_string_lossy().into_owned();
+            let path = entry.path().join("SKILL.md");
+            let text = fs::read_to_string(&path).ok()?;
+            Some((path, entry.file_name().to_string_lossy().into_owned(), text))
+        })
+        .collect()
+}
+
+/// The user's skills: (name, description and size, instructions).
+fn read_skills() -> Vec<(SkillInfo, String)> {
+    let mut skills: Vec<(SkillInfo, String)> = skill_files()
+        .into_iter()
+        .map(|(_, folder, text)| {
             let (name, description, body) = parse_skill(&text);
-            Some((SkillInfo { name: name.unwrap_or(folder), description: clip(&description, 200) }, body))
+            (SkillInfo { name: name.unwrap_or(folder), description: clip(&description, 200), chars: body.chars().count() }, body)
         })
         .collect();
     skills.sort_by(|a, b| a.0.name.cmp(&b.0.name));
     skills
+}
+
+/// The SKILL.md of the skill with this name, and its text. Found among the files, never by joining
+/// the name to a path.
+fn find_skill(name: &str) -> Option<(PathBuf, String)> {
+    skill_files().into_iter().find_map(|(path, folder, text)| (parse_skill(&text).0.unwrap_or(folder) == name).then_some((path, text)))
+}
+
+/// A SKILL.md with new instructions under its front matter, kept byte for byte.
+fn with_skill_body(text: &str, body: &str) -> String {
+    match text.strip_prefix("---").and_then(|rest| rest.split_once("\n---")) {
+        Some((head, _)) => format!("---{head}\n---\n\n{body}\n"),
+        None => format!("{body}\n"),
+    }
 }
 
 /// (name, description, body) of a SKILL.md: YAML front matter with one-line or folded values.
@@ -761,7 +1007,8 @@ fn parse_skill(text: &str) -> (Option<String>, String, String) {
             is_in_description = false;
         }
     }
-    (name, description, body.trim_start_matches(|c| c == '-' || c == '\n').trim().to_string())
+    // The rest of the closing line goes; a body that opens with a "- " list keeps its dash.
+    (name, description, body.split_once('\n').map_or("", |(_, rest)| rest).trim().to_string())
 }
 
 // ---------- A round ----------
@@ -844,11 +1091,11 @@ fn scout_args(connectors: &[Connector]) -> Vec<String> {
     .map(|arg| arg.to_string())
     .collect();
     // Variadic flags last; the prompt goes through stdin.
-    let specs: Vec<&ConnectorSpec> = connectors.iter().filter_map(|connector| spec(&connector.id)).collect();
+    let carried: Vec<&ConnectorSpec> = connectors.iter().filter_map(|connector| spec(&connector.id)).collect();
     args.push("--allowedTools".into());
-    args.extend(specs.iter().flat_map(|spec| spec.tools.iter().map(|tool| tool.to_string())));
+    args.extend(carried.iter().flat_map(|spec| spec.tools.iter().map(|tool| tool.to_string())));
     args.push("--disallowedTools".into());
-    args.extend(CONNECTORS.iter().flat_map(|spec| spec.denied.iter().map(|tool| tool.to_string())));
+    args.extend(specs().flat_map(|spec| spec.denied.iter().map(|tool| tool.to_string())));
     args
 }
 
@@ -920,7 +1167,7 @@ fn read_report(output: &Value, connectors: &[Connector]) -> Result<(Report, Opti
 }
 
 fn report_schema() -> Value {
-    let connector_ids: Vec<&str> = CONNECTORS.iter().map(|spec| spec.id).collect();
+    let connector_ids: Vec<&str> = specs().map(|spec| spec.id).collect();
     json!({
         "type": "object",
         "properties": {
@@ -1152,7 +1399,7 @@ fn is_source_url(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("https://") else { return false };
     let host = rest.split(['/', '?', '#']).next().unwrap_or("");
     let is_plain_host = !host.is_empty() && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.');
-    let is_known = CONNECTORS.iter().flat_map(|spec| spec.hosts.iter()).any(|known| host == *known || host.ends_with(&format!(".{known}")));
+    let is_known = specs().flat_map(|spec| spec.hosts.iter()).any(|known| host == *known || host.ends_with(&format!(".{known}")));
     is_plain_host && is_known && !url.chars().any(char::is_whitespace)
 }
 
@@ -1253,6 +1500,29 @@ mod tests {
         assert!(!is_source_url("https://user@evil.com/.slack.com"));
         assert!(!is_source_url("https://google.com/mail"));
         assert!(!is_source_url("javascript:alert(1)//slack.com"));
+        assert!(is_source_url("https://calendar.google.com/calendar/event?eid=abc"));
+        assert!(!is_source_url("https://www.google.com/calendar/event?eid=abc"));
+    }
+
+    #[test]
+    fn extra_connectors_carry_only_their_own_tools_and_plain_hosts() {
+        let entry = |tools: &str, hosts: &str| {
+            format!(
+                r#"[{{"id": "acme", "name": "Acme Metrics", "label": "Métricas", "tools": [{tools}], "hosts": [{hosts}], "how": "Run {{targets}}."}}]"#
+            )
+        };
+        let extras = parse_extras(&entry(r#""mcp__claude_ai_Acme_Metrics__run_metric""#, r#""admin.acme.com""#)).unwrap();
+        assert_eq!(extras.specs[0].tools, ["mcp__claude_ai_Acme_Metrics__run_metric"]);
+        assert_eq!(extras.shown.connectors[0].label, "Métricas");
+        for tool in ["\"Bash\"", "\"mcp__claude_ai_Acme_Metrics\"", "\"mcp__claude_ai_Acme_Metrics__*\"", "\"mcp__claude_ai_Slack__slack_send_message\""] {
+            assert!(parse_extras(&entry(tool, r#""admin.acme.com""#)).is_err(), "{tool} passed");
+        }
+        for host in ["\"https://admin.acme.com\"", "\"com\"", "\".acme.com\"", "\"Admin.acme.com\""] {
+            assert!(parse_extras(&entry(r#""mcp__claude_ai_Acme_Metrics__run_metric""#, host)).is_err(), "{host} passed");
+        }
+        let slack = r#"[{"id": "slack", "name": "Slack", "tools": ["mcp__claude_ai_Slack__slack_read_channel"], "hosts": ["slack.com"], "how": "x"}]"#;
+        assert!(parse_extras(slack).is_err());
+        assert!(is_connector_tool("Agenda Pública", "mcp__claude_ai_Agenda_P_blica__list"));
     }
 
     #[test]
@@ -1370,6 +1640,17 @@ mod tests {
         assert_eq!(description, "Sorts tickets by urgency");
         assert_eq!(body, "# Triage\nSteps");
         assert_eq!(parse_skill("---\nname: x\ndescription: \"One line\"\n---\nBody").1, "One line");
+        assert_eq!(parse_skill("---\nname: x\n---\n- first rule\n- second").2, "- first rule\n- second");
+    }
+
+    #[test]
+    fn skill_edits_keep_the_front_matter() {
+        let text = "---\nname: triage\ndescription: >\n  Sorts tickets\nmetadata:\n  owner: team\n---\n\n# Old\nSteps\n";
+        let saved = with_skill_body(text, "- New rule\n- Another");
+        assert!(saved.starts_with("---\nname: triage\ndescription: >\n  Sorts tickets\nmetadata:\n  owner: team\n---\n"));
+        let (name, description, body) = parse_skill(&saved);
+        assert_eq!((name.as_deref(), description.as_str(), body.as_str()), (Some("triage"), "Sorts tickets", "- New rule\n- Another"));
+        assert_eq!(with_skill_body("No front matter", "New"), "New\n");
     }
 
     #[test]

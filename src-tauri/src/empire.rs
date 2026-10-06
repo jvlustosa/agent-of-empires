@@ -93,6 +93,9 @@ pub struct RepoStats {
     pub founded_at: Option<i64>,
     /// Files git tracks: stone.
     pub tracked_files: Option<u32>,
+    /// The folder's checkout, for the base's nameplate.
+    pub branch: Option<String>,
+    pub worktree_of: Option<String>,
     /// Some agent has worked here; the others are still under the fog of war.
     pub is_explored: bool,
 }
@@ -274,6 +277,8 @@ pub fn empire(session_start: Option<i64>) -> Empire {
                 commits_total: git.commits_total,
                 founded_at: git.founded_at,
                 tracked_files: project.tracked_files,
+                branch: project.branch.clone(),
+                worktree_of: project.worktree_of.clone(),
                 is_explored: project.last_claude_at.is_some(),
             }
         })
@@ -738,6 +743,8 @@ mod tests {
             last_claude_at: None,
             last_git_at: None,
             tracked_files: None,
+            branch: None,
+            worktree_of: None,
         };
         let (site, site_ui, app) = (project("site", "/c/site"), project("site-ui", "/c/site-ui"), project("app", "/c/app"));
         let slugs: Vec<(String, &Project)> = [&site, &site_ui, &app].iter().map(|p| (project_slug(&p.path), *p)).collect();

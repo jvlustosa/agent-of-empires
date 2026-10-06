@@ -190,8 +190,8 @@ eram cavalos de caixas com um cavaleiro de cápsula.
   pernas abertas em volta do lombo, feitas em código como o aceno.
 - **Animação**: galope no passo do 2D (o `walkClock`), parado ou pastando 6 s a cada 14 s, e galope no
   ar quando pego pelo mouse.
-- **Batedor**: manta berinjela com barra dourada presa ao tronco do cavalo; lança com a flâmula do
-  Slack, escudo e penacho presos aos ossos do cavaleiro; aura e pergaminho como antes. Sem os
+- **Batedor**: manta berinjela com barra dourada presa ao tronco do cavalo; lança com a bandeira do
+  ChatJurídico, escudo e penacho presos aos ossos do cavaleiro; aura e pergaminho como antes. Sem os
   modelos, as primitivas de antes.
 - **Escala**: cavalo × 4,2, cavaleiro na escala dos aldeões (× 6,5).
 
@@ -382,19 +382,31 @@ agente mexia na main ou numa branch própria.
   linha do tempo.
 - **Branch**: o Claude Code grava `gitBranch` em cada linha do transcript; o backend guarda a última
   não vazia e manda no snapshot (`branch`). Se não é `main`, `master` nem `HEAD` (detached), o nome
-  aparece em laranja com ícone de branch no card e no rótulo do aldeão (ao passar o mouse ou
+  aparece em azul claro com ícone de branch no card e no rótulo do aldeão (ao passar o mouse ou
   selecionar). Na main, nada muda.
 - **Leve**: nenhuma requisição nem leitura de arquivo a mais (a branch vem do transcript que já é
   lido); um ícone 5 × 5 e um SVG embutido no CSS.
 - Limite conhecido: a branch só muda quando o transcript ganha uma linha nova. Trocar de branch na
   mão com a sessão parada só aparece no próximo turno.
+- **Branch e worktree na placa da base**: a contagem do império (`get_empire`) lê de cada pasta o
+  `.git/HEAD` (a branch, ou o commit curto se detached) e, se o `.git` é um arquivo apontando para
+  `<repo>/.git/worktrees/<nome>`, de qual repositório ela é worktree (submódulo, que aponta para
+  `.git/modules`, não conta). Fora da main, ou numa worktree, a placa ganha uma linha azul sob o
+  nome (`feature-x · worktree de site`); na main, nada. O card do Centro da Cidade mostra sempre a
+  branch, até a main. Pasta fora da contagem usa a branch do transcript das suas sessões.
+- Cada worktree continua sendo uma base própria (a base é a pasta), agora com a placa dizendo de
+  quem ela é.
+- **Leve**: um arquivo de uma linha por repositório, na contagem que já roda a cada minuto, sem
+  rodar git. Quando um aldeão troca de branch, o app conta de novo na hora, para a placa não ficar
+  um minuto atrás do rótulo do aldeão. Troca na mão sem sessão aberta aparece na contagem seguinte.
 
 ### Etapas
 
 | Etapa | Escopo | Status |
 |---|---|---|
 | 1 | Atividade `git` (balão, chip, linha do tempo) e branch no card e no rótulo | **Concluída** em 2026-10-04, com testes do backend e verificada no Chrome headless com o app real e backend Tauri falso (2D e 3D; o ISO usa o mesmo desenho do 2D) |
-| 2 | Opcional: marca da branch visível no mapa sem passar o mouse (bandeirinha no aldeão) | Ideia |
+| 2 | Branch e worktree na placa da base, sem passar o mouse, e branch no card do Centro da Cidade | **Concluída** em 2026-10-04, com teste do backend (worktree, repositório bare e submódulo) e verificada no Chrome headless com backend Tauri falso (2D, 3D e card) |
+| 3 | Opcional: bandeirinha da branch no próprio aldeão | Ideia |
 
 ## Iniciativa: pegar um aldeão com o mouse
 
@@ -471,7 +483,7 @@ app aberto o dia todo ao lado do Claude Code, faltava variedade e música de fun
 
 ## Iniciativa: o Batedor, guerreiro líder da aldeia
 
-Atualizada em 2026-10-03. Tem PRD próprio: [PRD do Batedor](PRD-batedor.md).
+Atualizada em 2026-10-04. Tem PRD próprio: [PRD do Batedor](PRD-batedor.md).
 
 Um cavaleiro com o logo do Slack no escudo lê as fontes com que foi equipado (Slack, Gmail, Notion,
 pelos conectores da conta do Claude), traz missões prontas para as bases e ganha experiência com o
@@ -480,6 +492,8 @@ tempo. Só lê; nenhuma missão começa sem o usuário treinar o aldeão.
 | Etapa | Escopo | Status |
 |---|---|---|
 | 1 a 4 | Ronda, missões, cavaleiro no mapa com aura, equipamento (conectores, skills, rotinas), diário e níveis | **Concluídas** em 2026-10-03; falta a ronda de verdade no app |
+| 4b e 4c | Equipamento no desenho do Ragnarok; edição fluida (foco preservado, salvar ao fechar, Desfazer) | **Concluídas** em 2026-10-04 |
+| 4e | Equipar e editar skills: busca, peso na ronda, instruções do SKILL.md editadas no painel, atalhos na aba Habilidades | **Concluída** em 2026-10-04 |
 | 5 | Prestar contas: acompanhar o aldeão e deixar o rascunho de resposta na thread de origem | Proposta |
 
 ## Iniciativa: comandar pelo celular
@@ -502,7 +516,7 @@ com `--remote-control`, não o mapa, e deixa de fora os agentes que o app hosped
 
 - **Painel Celular**: botão com ícone de celular no topo da sidebar (verde, com um ponto, quando
   ligado). Liga e desliga, mostra o QR code, a rede (Wi-Fi, cabo ou Tailscale, quando há mais de
-  uma), se o celular está conectado, Copiar link e Trocar o código.
+  uma), se o celular está conectado, por quanto tempo o código vale, Copiar link e Invalidar código.
 - **No celular**: quem precisa de você (Aprovar / Negar, perguntas com opções), os agentes por
   urgência, Responder para os agentes que rodam no app na vez deles, e "+ Novo agente" (projeto da
   lista e tarefa; roda "aqui no app"). Atualiza a cada 2 s com a página aberta e para quando ela
@@ -521,14 +535,25 @@ com `--remote-control`, não o mapa, e deixa de fora os agentes que o app hosped
   localhost; o resto cai sem resposta. IPv4 apenas.
 - Código de pareamento de 256 bits, em `phone.json` (0600). Vai no `#fragmento` do link, que o
   navegador nunca envia; a página guarda e manda como `Authorization: Bearer`. Comparação em tempo
-  constante; código errado espera 400 ms. Trocar o código derruba o celular pareado.
+  constante; código errado espera 400 ms. Invalidar código (dois cliques, como Encerrar sessão)
+  derruba todo celular pareado.
+- Validade do código: sem prazo (padrão, como antes), 1, 7 ou 30 dias, contados da escolha e de
+  cada código novo. Vencido, o código falha em toda chamada (a checagem fica junto da comparação do
+  código, não depende do painel estar aberto); o painel, ao abrir, já gera e mostra o QR novo.
 - O celular só faz o que o painel já faz: aprovar ou negar (nunca "Responder no Cursor"), mandar o
-  próximo turno a um agente hospedado e criar agente só em pasta da lista de projetos. O estado
-  enviado não leva pid, pasta nem arquivos editados.
+  próximo turno a um agente e criar agente só em pasta da lista de projetos. O estado enviado não
+  leva pid, pasta nem arquivos editados.
+- Responder a um agente do Cursor ou do terminal o traz para o app: só parado (nunca no meio de um
+  turno), só sessão listada, e o SIGTERM vai só ao processo registrado em `~/.claude/sessions`. O
+  app espera o processo sair (até 8 s) antes de retomar a sessão, para nunca haver dois processos
+  na mesma conversa.
 - Limites: 16 conexões ao mesmo tempo, 5 s de leitura, 16 KB de cabeçalho, 64 KB de corpo,
   4000 caracteres por mensagem. Página com CSP `default-src 'none'`, `nosniff`, `no-referrer`.
 - HTTP sem TLS: na rede local o tráfego (e o código) pode ser lido por quem está na mesma rede. O
   painel avisa para usar Wi-Fi público só pelo Tailscale, que criptografa.
+- Endereço na internet (opcional): só `https://` com o domínio puro, sem caminho. O túnel entra por
+  localhost, então passa pelo filtro de endereços e só o código o barra; o painel pede login no
+  túnel (Cloudflare Access) na frente.
 
 ### Etapas
 
@@ -537,6 +562,10 @@ com `--remote-control`, não o mapa, e deixa de fora os agentes que o app hosped
 | 1 | Painel na sidebar com QR, servidor local, página do celular com aprovações, respostas e novo agente | **Concluída** em 2026-10-03, com testes do backend e das duas telas no Chrome headless com backend falso; falta testar num celular de verdade |
 | 2 | Avisos com a página fechada (push precisa de HTTPS; alternativa: ntfy no Tailscale) | Ideia |
 | 3 | HTTPS pelo `tailscale serve`, para tirar o aviso de rede aberta | Ideia |
+| 4 | Endereço na internet: campo no painel para o domínio de um túnel (Cloudflare Tunnel); o QR ganha a rede "Internet", primeira da lista, e a página pareada nele funciona em casa e fora | **Concluída** em 2026-10-04 com `agents.fontenele.com.br` (túnel `agent-of-empires`, serviço `cloudflared-agents` do systemd de usuário); falta o Cloudflare Access na frente |
+| 5 | Responder pelo celular a agentes do Cursor e do terminal: a mensagem encerra o processo lá e retoma a mesma conversa no app (`--resume`), já com ela como próximo turno; o diálogo avisa que a conversa muda de lugar | **Concluída** em 2026-10-04, com testes do backend; falta testar num celular de verdade |
+| 6 | "Aprovar tudo por 10 min" no celular, o mesmo interruptor do mapa (os dois mostram a contagem, quem ligar); e o hook de aprovação se corrige ao abrir o app: um caminho velho (binário recompilado vira `… (deleted)`) fazia os pedidos do Cursor não chegarem nem ao painel nem ao celular | **Concluída** em 2026-10-04. Perguntas (AskUserQuestion) de agentes do Cursor seguem só no Cursor: o hook de permissão não as recebe e responder por ele não é documentado; as dos agentes do app, com escolha múltipla, já vão ao celular |
+| 7 | Segurança do código: **Invalidar código** no lugar de "Trocar o código", com confirmação de dois cliques, e **O código vale por** (sem prazo, 1, 7 ou 30 dias), com a data em que vence ao lado | **Concluída** em 2026-10-04, com teste do vencimento e o painel conferido no Chrome headless com backend falso |
 
 ### Como validar
 
@@ -716,3 +745,138 @@ o mapa, que é o que explica o app em segundos.
 | 1 | Repositório público, descrição e tópicos | **Concluída** em 2026-10-04 |
 | 2 | Banner, GIFs e tour no README | **Concluída** em 2026-10-04, PR #1 |
 | 3 | Imagem de prévia social enviada pelo GitHub | A fazer (manual, pelo site) |
+
+## Iniciativa: mapa simplificado e mapa que não apaga
+
+Atualizada em 2026-10-05.
+
+### Problema
+
+A GPU Intel (i915) travou cinco vezes no processo WebKit do app em 2026-10-04 ("GPU HANG ...
+context reset"). Cada travamento derruba o contexto WebGL e o mapa 3D ficava em branco até reiniciar
+o app. E o usuário quer um modo que abstraia os detalhes e gaste menos enquanto o app fica aberto o
+dia todo.
+
+### Como funciona
+
+- **Mapa que não apaga**: perdido o contexto WebGL, o mapa passa para a vista de cima (Canvas 2D, sem
+  WebGL) e avisa; `V` volta ao 3D quando a placa devolve o contexto.
+- **Mapa simplificado** (botão nos controles do canto superior direito, ao lado do ⛶, e
+  Configurações › Exibição; os dois são o mesmo ajuste, salvo em `cpo.simpleMap`): nas três vistas, sem
+  árvores, muralha da borda, vila crescida, estandartes, maravilhas, sombras e noite; o limite do
+  loop cai de 30 para 15 quadros; no 3D, resolução 1× e rio parado. Troca na hora: o 2D repinta o
+  chão e o 3D reconstrói cenário e bases (o modo entra na chave delas).
+- **Decisão**: o limite de 30 quadros fica como estava. O WebKitGTK dá timestamps em ms inteiros e o
+  teste `< FRAME_MS` pula um vsync, então o mapa roda a ~21 quadros (e o simplificado a ~12). Uma
+  folga de 4 ms levava a 30, mas o usuário pediu para manter como antes.
+
+### Medição
+
+MiniBrowser do WebKitGTK 2.52 (o motor do app) num mutter headless, dados de demonstração, 3D a
+60 Hz: CPU dos processos WebKit ~41% no mapa normal e ~20% no simplificado (três rodadas cada).
+
+### Etapas
+
+| Etapa | Escopo | Status |
+|---|---|---|
+| 1 | Queda para 2D quando o contexto WebGL se perde | **Concluída** em 2026-10-04, testado com `WEBGL_lose_context` |
+| 2 | Mapa simplificado nas três vistas | **Concluída** em 2026-10-04, falta build instalada |
+| 3 | Retrato 3D do Batedor parado no modo simplificado (hoje redesenha a 30 quadros por `setInterval`) | A fazer |
+| 4 | Botão do mapa simplificado nos controles do canto superior direito, em sincronia com Configurações | **Concluída** em 2026-10-05 |
+
+## Iniciativa: repositórios fora da pasta de repositórios
+
+Atualizada em 2026-10-04.
+
+### Problema
+
+O app só enxerga os repositórios da pasta escolhida na primeira execução (`~/Code` por padrão), dois
+níveis abaixo. Um repositório em outro lugar (configurações do sistema na home, por exemplo) não
+aparecia em Construir, não ganhava base fixa com números e não recebia agente pelo "Novo agente".
+
+### Como funciona
+
+- **Construir**: uma busca que começa como caminho (`~` ou `/`) vira o item "Adicionar <caminho>".
+  `add_repo` confere que é uma pasta com `.git`, salva o caminho em `config.json` (`extraRepos`) e
+  devolve o repositório já listado; a base segue o ponteiro como qualquer outra.
+- **Uma lista só**: `list_projects` soma os `extraRepos` que ainda existem aos da pasta, então a
+  lista, a névoa, os números do império, o "Novo agente" e a checagem do `deploy_agent` seguem sem
+  mudança.
+- **Decisão**: sem tela nova nem seletor de pasta; o caminho escrito na própria busca basta. Remover
+  um repositório de fora é editar `extraRepos` (raro).
+
+### Etapas
+
+| Etapa | Escopo | Status |
+|---|---|---|
+| 1 | `extraRepos` na config, `add_repo` e o item "Adicionar" em Construir | **Concluída** em 2026-10-04 |
+
+## Iniciativa: tarefas dos selecionados, um comando para cada
+
+Atualizada em 2026-10-04.
+
+### Problema
+
+Com vários agentes selecionados, o mapa só dizia quantos eram. Para ver o que cada um estava fazendo
+e dar a próxima ordem era preciso abrir um por um (card, menu ou campo de comando trocando de alvo).
+A ordem em grupo ("Mandar para…") serve para mudar de repositório, não para responder cada agente.
+
+### Como funciona
+
+- **Tarefas** na barra de seleção (ou tecla T) aparece com dois ou mais agentes vivos selecionados
+  (recruta não entra: ainda não tem tarefa). Abre um pop-up agrupado pelo repositório onde cada um
+  trabalha agora (o mesmo que o mapa usa), em ordem alfabética; dentro do grupo, quem precisa de
+  você primeiro.
+- **Cada linha**: estado e há quanto tempo, a última tarefa e, quando a vez é sua, a última resposta
+  do Claude. Embaixo, um campo de comando só daquele agente; o placeholder diz o caminho
+  ("chega direto" ou "vai copiado e a aba do Cursor abre"). Sessão de terminal fica sem campo.
+- **Um por um**: Enter manda pelo `deliverCommand` de sempre, limpa o campo e passa o foco para o
+  próximo agente. Se não foi, o texto volta.
+- **Ao vivo**: a cada atualização das sessões, o estado e a tarefa de cada linha são redesenhados
+  sem tocar no campo; quem saiu do mapa vira "Saiu do mapa" e perde o campo.
+- **Decisão**: sem "Enviar todos". No Cursor o comando vai pela área de transferência e abre a aba,
+  então mandar vários de uma vez faria um sobrescrever o outro; Enter em cada linha resolve.
+
+### Etapas
+
+| Etapa | Escopo | Status |
+|---|---|---|
+| 1 | Botão Tarefas e tecla T, pop-up por repositório, comando por agente, atualização ao vivo | **Concluída** em 2026-10-04, testada com backend falso no Chrome headless; falta o app real |
+
+## Iniciativa: aldeia ativa à vista
+
+Atualizada em 2026-10-05.
+
+### Problema
+
+A placa de cada base já tinha uma lâmpada (verde, âmbar, vermelha ou apagada), mas pequena. No mapa,
+uma base com gente trabalhando e uma esquecida eram iguais. E uma pasta aberta no Cursor sem nenhuma
+sessão do Claude aparecia como `Fechado · sem sessão`.
+
+### Como funciona
+
+- **Ativa** = janela do Cursor ou do VS Code aberta na pasta, um aldeão trabalhando (inclusive
+  pedindo aprovação) ou um aldeão sendo treinado ali. Aldeão esperando sua vez não conta: a base fica
+  na sombra, com a lâmpada âmbar na placa.
+- **No mapa** (2D, ISO e 3D): base parada tem a terra na sombra (uma camada escura a 30% sobre o chão;
+  o que está de pé mantém a cor), o tracejado do território em pedra e a bandeira arriada, caída ao pé
+  do mastro. A ativa fica como sempre foi: tracejado na cor do time e bandeira tremulando.
+- **Na placa**: lâmpada azul e a linha `Cursor aberto` quando só o editor está aberto; base ativa
+  ganha borda dourada e um anel na lâmpada. O card do Centro da Cidade, a dica e o menu de comando
+  dizem `Cursor aberto` no lugar de `Fechado · sem sessão`.
+- **Como o app sabe do Cursor**: cada janela do Cursor (e do VS Code) roda um vigia de arquivos, um
+  processo utilitário do Electron com o `--user-data-dir` do editor, que mantém um watch inotify em
+  cada pasta do workspace e em tudo dentro dela. O backend lê esses watches em `/proc/<pid>/fdinfo` e
+  compara com o inode da pasta de cada base: a pasta está aberta quando um vigia a observa e não
+  observa a pasta-mãe (uma worktree dentro de um repositório aberto não conta como janela própria).
+  O processo principal do editor fica de fora, porque continua observando pastas de janelas já
+  fechadas. Só Linux; nos outros sistemas nenhuma pasta conta como aberta.
+- **Leve**: listar os watches de uma janela custa ~25 ms ao kernel, então cada processo é lido quando
+  aparece e relido a cada 60 s (pasta adicionada ao workspace). A conferência a cada 10 s fica em
+  ~8 ms. No mapa é um retângulo a mais por base parada (no 3D, um plano por base).
+
+### Etapas
+
+| Etapa | Escopo | Status |
+|---|---|---|
+| 1 | Detecção das janelas do Cursor/VS Code, sombra, tracejado e bandeira arriada nas três vistas, lâmpada azul e placa dourada | **Concluída** em 2026-10-05, testada com backend falso no Chrome headless (2D, ISO e 3D) e com a detecção nas 4 janelas do Cursor abertas; falta o app real |

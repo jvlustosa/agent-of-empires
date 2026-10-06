@@ -44,6 +44,8 @@ pub struct Config {
     pub onboarded_at: Option<i64>,
     /// Where the repositories live; None means ~/Code.
     pub projects_root: Option<String>,
+    /// Repositories outside the projects folder, added by their path in Construir.
+    pub extra_repos: Vec<String>,
     /// Fetch the plan limits from Anthropic's API, the only network call the app makes.
     pub is_usage_on: bool,
 }
@@ -125,6 +127,29 @@ pub async fn set_projects_root(path: String) -> Result<usize, String> {
         config.projects_root = Some(root.to_string_lossy().into_owned());
         config.save()?;
         Ok(projects::list_projects().len())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// Adds a repository that lives outside the projects folder (e.g. ~/dotfiles) and returns it as listed.
+#[tauri::command]
+pub async fn add_repo(path: String) -> Result<projects::Project, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo = expand_home(path.trim().trim_end_matches('/')).ok_or("Escreva o caminho de uma pasta")?;
+        if !repo.is_dir() {
+            return Err(format!("A pasta {} não existe", repo.display()));
+        }
+        if !repo.join(".git").exists() {
+            return Err(format!("{} não é um repositório git", repo.display()));
+        }
+        let repo_text = repo.to_string_lossy().into_owned();
+        let mut config = Config::load();
+        if !config.extra_repos.contains(&repo_text) {
+            config.extra_repos.push(repo_text.clone());
+            config.save()?;
+        }
+        projects::list_projects().into_iter().find(|p| p.path == repo_text).ok_or_else(|| format!("Não consegui listar {repo_text}"))
     })
     .await
     .map_err(|err| err.to_string())?
@@ -262,8 +287,11 @@ fn read_settings(path: &Path) -> Option<Value> {
 
 fn hook_command() -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|err| format!("Não achei o executável do app: {err}"))?;
+    // Linux names a binary replaced while running "<path> (deleted)"; the new one sits at <path>.
+    let exe = exe.to_string_lossy();
+    let exe = exe.strip_suffix(" (deleted)").unwrap_or(&exe);
     // Single quotes: the shell Claude Code runs hooks in takes the path literally.
-    Ok(format!("'{}' {HOOK_FLAG}", exe.to_string_lossy().replace('\'', r"'\''")))
+    Ok(format!("'{}' {HOOK_FLAG}", exe.replace('\'', r"'\''")))
 }
 
 fn hook_preview() -> String {
@@ -281,12 +309,28 @@ fn is_our_command(command: &str) -> bool {
 }
 
 fn has_our_hook(settings: &Value) -> bool {
+    has_hook_where(settings, is_our_command)
+}
+
+fn has_hook_where(settings: &Value, matches: impl Fn(&str) -> bool) -> bool {
     settings["hooks"][HOOK_EVENT]
         .as_array()
         .into_iter()
         .flatten()
         .flat_map(|group| group["hooks"].as_array().into_iter().flatten())
-        .any(|hook| hook["command"].as_str().is_some_and(is_our_command))
+        .any(|hook| hook["command"].as_str().is_some_and(&matches))
+}
+
+/// At startup: an installed hook follows the app when its binary moved or was rebuilt. One that
+/// points at a missing file fails quietly, and no prompt reaches the panel or the phone.
+pub fn refresh_permission_hook() {
+    let (Some(settings), Ok(command)) = (settings_path().as_deref().and_then(read_settings), hook_command()) else { return };
+    if !has_our_hook(&settings) || has_hook_where(&settings, |installed| installed == command) {
+        return;
+    }
+    if let Err(err) = set_permission_hook(true) {
+        eprintln!("[onboarding] permission hook not refreshed: {err}");
+    }
 }
 
 /// The settings with our hook removed and, when `command` is given, added back pointing at it.

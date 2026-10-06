@@ -8,6 +8,9 @@ const REFRESH_MS = 3000;
 // A phone page polls every 2 s while open: seen this recently means it is on screen now.
 const CONNECTED_MS = 10_000;
 const QR_SCALE = 5;
+// "Invalidar código" asks for a second click within this window, as the menu's confirmations do.
+const CONFIRM_WINDOW_MS = 4000;
+const RESET_LABEL = 'Invalidar código';
 
 export function createPhonePanel({ invoke, showToast }) {
   const dialog = document.getElementById('phone');
@@ -20,11 +23,17 @@ export function createPhonePanel({ invoke, showToast }) {
   const networks = document.getElementById('phone-networks');
   const seenEl = document.getElementById('phone-seen');
   const portNote = document.getElementById('phone-port-note');
+  const stepNetwork = document.getElementById('phone-step-network');
+  const publicUrlInput = document.getElementById('phone-public-url');
+  const lifetimeSelect = document.getElementById('phone-lifetime');
+  const expiryEl = document.getElementById('phone-expiry');
+  const resetButton = document.getElementById('phone-reset');
   let status = null;
   let chosenAddress = null; // with Wi-Fi and Tailscale both up, the one the QR shows
   let drawnUrl = null;
   let refreshTimer = null;
   let returnFocus = null;
+  let resetConfirmTimer = null;
 
   function currentLink() {
     const links = status?.links ?? [];
@@ -73,15 +82,26 @@ export function createPhonePanel({ invoke, showToast }) {
     errorEl.hidden = !error;
     errorEl.textContent = error ?? '';
     pairing.hidden = !isOn || !link;
-    portNote.hidden = !isOn || !status?.port;
+    if (document.activeElement !== publicUrlInput) publicUrlInput.value = status?.publicUrl ?? '';
+    const isInternet = link?.network === 'Internet';
+    portNote.hidden = !isOn || !status?.port || isInternet;
     portNote.textContent = status?.port ? `Não abriu no celular? Confira se o firewall deste computador libera a porta ${status.port}/TCP.` : '';
     if (pairing.hidden) return;
+    stepNetwork.textContent = isInternet
+      ? 'Celular com internet, em qualquer rede: o endereço passa pelo seu túnel.'
+      : 'Celular na mesma rede Wi-Fi deste computador, ou no Tailscale.';
     renderNetworks(links);
     if (link.url !== drawnUrl) {
       drawnUrl = link.url;
       drawQr(qr, link.url, QR_SCALE);
     }
     seenEl.textContent = seenText(status.lastSeenAt);
+    lifetimeSelect.value = String(status.tokenLifetimeDays ?? 0);
+    expiryEl.textContent = status.tokenExpiresAt ? `até ${formatExpiry(status.tokenExpiresAt)}` : '';
+  }
+
+  function formatExpiry(at) {
+    return new Date(at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
 
   async function load() {
@@ -109,6 +129,24 @@ export function createPhonePanel({ invoke, showToast }) {
     }
   });
 
+  async function savePublicUrl() {
+    const url = publicUrlInput.value.trim();
+    if (url === (status?.publicUrl ?? '')) return;
+    try {
+      status = await invoke('set_phone_public_url', { url });
+      chosenAddress = null; // the QR moves to the new address, or back home without one
+      render();
+      showToast(status.publicUrl ? `O QR agora usa ${status.publicUrl}` : 'Endereço na internet removido: o QR volta para a rede local');
+    } catch (err) {
+      showToast(String(err), true);
+    }
+  }
+
+  publicUrlInput.addEventListener('change', savePublicUrl);
+  publicUrlInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') publicUrlInput.blur(); // blur fires change
+  });
+
   document.getElementById('phone-copy').addEventListener('click', async () => {
     const link = currentLink();
     if (!link) return;
@@ -120,11 +158,36 @@ export function createPhonePanel({ invoke, showToast }) {
     }
   });
 
-  document.getElementById('phone-reset').addEventListener('click', async () => {
+  lifetimeSelect.addEventListener('change', async () => {
+    const days = Number(lifetimeSelect.value);
+    try {
+      status = await invoke('set_phone_token_lifetime', { days });
+      render();
+      showToast(days ? `O código vale ${days === 1 ? '1 dia' : `${days} dias`} a partir de agora; depois, o celular escaneia o QR novo` : 'O código vale até você invalidar');
+    } catch (err) {
+      render(); // back to the saved choice
+      showToast(String(err), true);
+    }
+  });
+
+  function disarmReset() {
+    clearTimeout(resetConfirmTimer);
+    resetButton.classList.remove('is-confirming');
+    resetButton.textContent = RESET_LABEL;
+  }
+
+  resetButton.addEventListener('click', async () => {
+    if (!resetButton.classList.contains('is-confirming')) {
+      resetButton.classList.add('is-confirming');
+      resetButton.textContent = 'Clique de novo para invalidar';
+      resetConfirmTimer = setTimeout(disarmReset, CONFIRM_WINDOW_MS);
+      return;
+    }
+    disarmReset();
     try {
       status = await invoke('reset_phone_token');
       render();
-      showToast('Código trocado: o celular precisa escanear o QR novo');
+      showToast('Código invalidado: todo celular pareado perdeu o acesso e precisa escanear o QR novo');
     } catch (err) {
       showToast(String(err), true);
     }
@@ -141,6 +204,7 @@ export function createPhonePanel({ invoke, showToast }) {
 
   function close() {
     clearInterval(refreshTimer);
+    disarmReset();
     dialog.hidden = true;
     backdrop.hidden = true;
     returnFocus?.focus?.();

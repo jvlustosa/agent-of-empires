@@ -29,6 +29,7 @@ const SHORTCUTS = [
     ['.', 'próximo aldeão ocioso'],
     ['Shift ou Ctrl + clique', 'soma à seleção'],
     ['Ctrl+A', 'seleciona todos'],
+    ['T', 'tarefas dos selecionados, com um comando para cada'],
     ['Esc', 'limpa a seleção ou cancela'],
   ]],
   ['Interface', [

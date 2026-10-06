@@ -59,6 +59,7 @@ const VIEW_ZOOM_KEY = 'cpo.viewZoom';
 // The map's view: { mode: 'top' | 'iso', rotation: 0..3 }.
 const MAP_VIEW_KEY = 'cpo.mapView';
 const MAP_ONLY_KEY = 'cpo.mapOnly';
+const SIMPLE_PREF_KEY = 'cpo.simpleMap';
 const PANEL_COLLAPSED_KEY = 'cpo.panelCollapsed';
 const PANEL_LEFT_KEY = 'cpo.panelLeft';
 // The saved view's format: v2 made the 3D isometric the default and replaced the pixel one.
@@ -75,6 +76,8 @@ const NEEDS_YOU_TOAST_MS = 10 * 1000;
 // The empire's numbers change slowly, but the balloons of the session's tokens should keep up; the
 // backend only rereads what changed (a few milliseconds).
 const EMPIRE_REFRESH_MS = 60 * 1000;
+// Opening or closing a Cursor window shows on its base within this (the check takes a few ms).
+const EDITORS_REFRESH_MS = 10 * 1000;
 
 let agents = [];
 let rawAgents = [];
@@ -129,6 +132,7 @@ const empire = new Empire(document.getElementById('map'), document.getElementByI
   onAgeUp: (project, era) => celebrateAgeUp(project, era),
   onEvent: (event) => recordEmpireEvent(event),
   view: readMapView(),
+  isSimple: readPref(SIMPLE_PREF_KEY, false),
   layout: readLayout(),
   onLayoutChange: (layout) => {
     saveLayout(layout);
@@ -319,6 +323,28 @@ async function refreshEmpire() {
   if (overview.isOpen()) overview.render();
 }
 
+// Bases with a Cursor (or VS Code) window open on their folder: active even with nobody working.
+async function refreshEditors() {
+  const projectOf = new Map();
+  for (const project of empire.bases.keys()) {
+    const folder = empire.repoPathOf(project);
+    if (folder) projectOf.set(folder, project);
+  }
+  let open;
+  try {
+    open = await window.__TAURI__.core.invoke('editor_folders', { folders: [...projectOf.keys()] });
+  } catch {
+    return; // the last answer stands until the next check
+  }
+  empire.setEditors(new Map(Object.entries(open).map(([folder, editor]) => [projectOf.get(folder), editor])));
+}
+
+// What a base with no agent says: its editor window open, or closed.
+function quietSummary(project) {
+  const editor = empire.editorOf(project);
+  return editor ? `${editor} aberto` : 'Fechado · sem sessão';
+}
+
 resourcesEl.addEventListener('click', () => overview.open());
 document.getElementById('overview-open').addEventListener('click', () => overview.open());
 window.addEventListener('keydown', (event) => {
@@ -353,9 +379,11 @@ const baseCard = createBaseCard({
     const era = ERAS.find((e) => e.id === design.era)?.name;
     const style = TOWN_STYLES.find((s) => s.id === design.style)?.name;
     const folder = empire.displayName(project) === project ? null : `pasta ${project}`;
+    const checkout = empire.checkoutOf(project);
+    const worktree = checkout.worktreeOf && `worktree de ${empire.displayName(checkout.worktreeOf)}`;
     return {
       title: empire.displayName(project),
-      meta: [folder, `${era} · ${style}`, crew.length === 0 ? 'Nenhum aldeão agora' : null].filter(Boolean).join(' · '),
+      meta: [folder, checkout.branch && `branch ${checkout.branch}`, worktree, `${era} · ${style}`, crew.length === 0 ? quietSummary(project) : null].filter(Boolean).join(' · '),
       waiting: crew.filter((agent) => attentionRank(agent) < 2).map(crewEntry),
       working: crew.filter((agent) => attentionRank(agent) === 2).map(crewEntry),
     };
@@ -393,6 +421,17 @@ const buildMenu = createBuildMenu({
       const files = Number.isFinite(repo.trackedFiles) ? ` · ${repo.trackedFiles.toLocaleString('pt-BR')} arquivos` : '';
       return { name: repo.name, path: repo.path, isOnMap: empire.hasBase(repo.name), detail: `${era}${files}` };
     });
+  },
+  addRepo: async (path) => {
+    try {
+      const repo = await window.__TAURI__.core.invoke('add_repo', { path });
+      empire.setRepoPaths([repo]);
+      refreshEmpire(); // its numbers, and Construir lists it from now on
+      return repo;
+    } catch (err) {
+      showToast(String(err), true);
+      return null;
+    }
   },
   onBuild: (repo) => {
     empire.startPlacing(repo.name, repo.path);
@@ -893,7 +932,7 @@ function openCommandTargetMenu() {
   items.push({ section: 'Novo agente em' });
   for (const project of commandVillages()) {
     const crew = rawAgents.filter((a) => !isObserver(a) && a.project === project);
-    items.push({ label: empire.displayName(project), hint: statusSummary(crew) || 'Nenhum aldeão agora', onSelect: () => chooseCommandVillage(project) });
+    items.push({ label: empire.displayName(project), hint: statusSummary(crew) || quietSummary(project), onSelect: () => chooseCommandVillage(project) });
   }
   items.push({ label: 'Outro repositório…', hint: 'Busca em ~/Code, já com a tarefa escrita', onSelect: handOffToDialog });
   actionMenu.open(commandTargetButton, 'Para quem vai o comando', items, commandTargetButton);
@@ -1277,7 +1316,7 @@ function crewFor(id) {
 function baseHint(project) {
   const crew = rawAgents.filter((agent) => !isObserver(agent) && agent.project === project);
   const folder = empire.displayName(project) === project ? '' : `pasta ${project} · `;
-  return `${folder}${statusSummary(crew) || 'Nenhum aldeão agora'}`;
+  return `${folder}${statusSummary(crew) || quietSummary(project)}`;
 }
 
 // "Mandar para…": the bases on the map, by name. Picking one opens the order, as clicking that base does.
@@ -1601,10 +1640,12 @@ orderEl.addEventListener('keydown', (event) => {
 
 // Picked villagers: a bar on the map says how many and what a right-click on a base does.
 const selectionBar = document.getElementById('selection-bar');
+const tasksButton = document.getElementById('selection-tasks');
 
 function renderSelection(ids) {
   for (const card of listEl.querySelectorAll('.card')) card.classList.toggle('is-picked', ids.includes(card.dataset.id));
   selectionBar.hidden = ids.length === 0;
+  tasksButton.hidden = pickedAgents(ids).length < 2;
   if (ids.length === 0) return;
   const first = crewMember(ids[0]);
   const recruits = ids.filter((id) => empire.recruitOf(id)).length;
@@ -1617,8 +1658,161 @@ document.getElementById('selection-clear').addEventListener('click', () => empir
 document.getElementById('selection-all').addEventListener('click', () => empire.selectAll());
 window.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape' || selectionBar.hidden) return;
-  const isOverlayOpen = [orderEl, settingsEl, document.getElementById('deploy'), document.getElementById('design')].some((node) => !node.hidden);
+  const isOverlayOpen = [orderEl, tasksEl, settingsEl, document.getElementById('deploy'), document.getElementById('design')].some((node) => !node.hidden);
   if (!isOverlayOpen) empire.setSelection([]);
+});
+
+// ---------- Tasks: the picked agents' last task, by repository, each with its own command ----------
+
+const tasksEl = document.getElementById('tasks');
+const tasksBackdrop = document.getElementById('tasks-backdrop');
+const tasksList = document.getElementById('tasks-list');
+let taskRows = new Map(); // agent id → { info, field, send }, in the popup's order, while it is open
+
+// Live agents only: a recruit has no task yet.
+function pickedAgents(ids = [...empire.selected]) {
+  return ids.map((id) => agents.find((a) => a.id === id)).filter(Boolean);
+}
+
+// Redrawn on every refresh; the command field under it keeps what you typed.
+function renderTaskInfo(container, agent) {
+  const kind = kindInfo(displayKind(agent));
+  container.style.setProperty('--kind', kind.color);
+  const top = el('span', 'tasks-top');
+  top.title = isYourTurn(agent) ? 'Terminou, esperando sua resposta' : agent.activity.label;
+  top.append(el('span', 'swatch'), el('strong', null, taskTitle(agent)), el('span', 'chip', kind.label), sinceEl(isYourTurn(agent) ? agent.activity.since : agent.lastPromptAt));
+  container.replaceChildren(top, el('span', 'card-prompt', agent.lastPrompt ? `“${agent.lastPrompt}”` : 'Sem tarefa ainda'));
+  // When the move is yours, what Claude last said is what the command answers.
+  if (attentionRank(agent) < 2 && agent.lastReply) container.append(el('span', 'card-reply', agent.lastReply));
+}
+
+function renderTaskRow(agent) {
+  const item = el('li', 'tasks-item');
+  item.style.setProperty('--team', agentColor(agent));
+  const info = el('div', 'tasks-info');
+  renderTaskInfo(info, agent);
+  const form = el('form', 'tasks-command');
+  const field = el('textarea', 'field');
+  field.rows = 1;
+  field.spellcheck = false;
+  field.setAttribute('aria-label', `Comando para ${taskTitle(agent)}`);
+  const send = el('button', 'btn', 'Enviar');
+  send.type = 'submit';
+  // A terminal session takes no command from outside: nothing to type here.
+  const isReachable = hostedIds.has(agent.id) || Boolean(agent.editor);
+  field.placeholder = isReachable ? `Comando · ${deliveryLabel(agent)}` : 'Sessão de terminal: mande por lá';
+  field.disabled = !isReachable;
+  send.disabled = !isReachable;
+  field.addEventListener('input', () => {
+    field.style.height = 'auto';
+    field.style.height = field.value ? `${field.scrollHeight}px` : '';
+  });
+  field.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    event.preventDefault();
+    if (!event.repeat) sendTaskCommand(agent.id);
+  });
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    sendTaskCommand(agent.id);
+  });
+  form.append(field, send);
+  item.append(info, form);
+  taskRows.set(agent.id, { info, field, send });
+  return item;
+}
+
+// Grouped by the base each one works at now; inside a repository, who needs you first.
+function openTasks() {
+  const picked = pickedAgents().sort(compareAgents);
+  if (picked.length === 0) return;
+  const groups = new Map();
+  for (const agent of picked) {
+    const project = empire.workProjectOf(agent);
+    groups.set(project, [...(groups.get(project) ?? []), agent]);
+  }
+  const projects = [...groups.keys()].sort((a, b) => empire.displayName(a).localeCompare(empire.displayName(b), 'pt-BR'));
+  taskRows = new Map();
+  tasksList.replaceChildren(
+    ...projects.map((project) => {
+      const crew = groups.get(project);
+      const head = el('h3', 'tasks-repo');
+      head.style.setProperty('--team', projectColor(project));
+      head.title = project;
+      head.append(el('span', 'swatch'), el('span', null, empire.displayName(project)), el('small', null, crew.length > 1 ? `${crew.length} agentes` : '1 agente'));
+      const list = el('ul', 'tasks-agents');
+      list.append(...crew.map(renderTaskRow));
+      const group = el('section', 'tasks-group');
+      group.append(head, list);
+      return group;
+    }),
+  );
+  document.getElementById('tasks-title').textContent = `Tarefas de ${picked.length} agentes`;
+  tasksEl.hidden = false;
+  tasksBackdrop.hidden = false;
+  [...taskRows.values()].find((row) => !row.field.disabled)?.field.focus();
+}
+
+function closeTasks() {
+  tasksEl.hidden = true;
+  tasksBackdrop.hidden = true;
+  tasksList.replaceChildren();
+  taskRows = new Map();
+}
+
+function refreshTasks() {
+  if (tasksEl.hidden) return;
+  for (const [id, row] of taskRows) {
+    const agent = agents.find((a) => a.id === id);
+    if (agent) {
+      renderTaskInfo(row.info, agent);
+      continue;
+    }
+    row.info.replaceChildren(el('span', 'card-prompt', 'Saiu do mapa'));
+    row.field.disabled = true;
+    row.send.disabled = true;
+  }
+}
+
+// Cleared up front so a second Enter can't send it twice; it comes back if it didn't go. Then the
+// next agent's field takes the focus: one by one, top to bottom.
+async function sendTaskCommand(id) {
+  const row = taskRows.get(id);
+  const text = row?.field.value.trim();
+  if (!text) return;
+  const agent = agents.find((a) => a.id === id);
+  if (!agent) {
+    showToast('Esse agente não está mais aqui', true);
+    return;
+  }
+  row.field.value = '';
+  row.field.style.height = '';
+  row.send.disabled = true;
+  const isSent = await deliverCommand(agent, text);
+  row.send.disabled = row.field.disabled;
+  if (!isSent) {
+    if (!row.field.value) row.field.value = text;
+    return;
+  }
+  const rows = [...taskRows.values()];
+  rows.slice(rows.indexOf(row) + 1).find((next) => !next.field.disabled)?.field.focus();
+}
+
+tasksButton.addEventListener('click', openTasks);
+document.getElementById('tasks-close').addEventListener('click', closeTasks);
+tasksBackdrop.addEventListener('click', closeTasks);
+tasksEl.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  event.stopPropagation();
+  closeTasks();
+});
+// T opens it while two or more agents are picked, wherever the focus is (outside a field).
+window.addEventListener('keydown', (event) => {
+  const isTyping = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+  if (event.key.toLowerCase() !== 't' || isTyping || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (tasksButton.hidden || document.querySelector('.modal:not([hidden]), .settings:not([hidden]), .action-menu:not([hidden])')) return;
+  event.preventDefault();
+  openTasks();
 });
 
 function readMapView() {
@@ -2126,7 +2320,7 @@ function showTooltip(hit) {
     placeTooltip(hit, [
       ['strong', name],
       ...(name === hit.project ? [] : [['em', `pasta ${hit.project}`]]),
-      ['span', statusSummary(members) || 'Nenhum aldeão agora'],
+      ['span', statusSummary(members) || quietSummary(hit.project)],
       ['span', spendSummary(hit.project)],
       ['small', 'Clique: treinar aldeões aqui, um ou vários · arraste: mudar a base de lugar · botão direito: treinar na hora, personalizar, fixar ou ocultar'],
     ]);
@@ -2220,6 +2414,7 @@ function refreshView() {
   renderIdleButton();
   renderPanel();
   renderSelection([...empire.selected]);
+  refreshTasks();
   renderApprovals();
   deployDialog.refresh();
 }
@@ -2227,7 +2422,11 @@ function refreshView() {
 function applySnapshot(snapshot) {
   if (!snapshot) return;
   hasSnapshot = true;
+  // A session that switched branches moved its folder's HEAD: count again now, so the base's
+  // nameplate follows at once instead of at the next minute's count.
+  const hasSwitchedBranch = snapshot.agents.some((agent) => rawAgents.some((before) => before.id === agent.id && before.branch !== agent.branch));
   rawAgents = snapshot.agents;
+  if (hasSwitchedBranch) refreshEmpire();
   refreshView();
 }
 
@@ -2574,6 +2773,22 @@ mapOnlyButton.addEventListener('click', () => setMapOnly(mapOnlyButton.getAttrib
 showMapView({ mode: empire.viewMode, rotation: empire.viewRotation });
 setMapOnly(readPref(MAP_ONLY_KEY, false));
 
+// "Mapa simplificado": the switch in Settings and the button over the map are one setting.
+const simpleToggle = document.getElementById('simple-toggle');
+const simpleMapButton = document.getElementById('simple-map');
+
+function setSimpleMap(isSimple) {
+  empire.setSimple(isSimple);
+  savePref(SIMPLE_PREF_KEY, isSimple);
+  simpleToggle.checked = isSimple;
+  simpleMapButton.setAttribute('aria-pressed', String(isSimple));
+}
+
+simpleToggle.checked = empire.isSimple;
+simpleMapButton.setAttribute('aria-pressed', String(empire.isSimple));
+simpleToggle.addEventListener('change', () => setSimpleMap(simpleToggle.checked));
+simpleMapButton.addEventListener('click', () => setSimpleMap(!empire.isSimple));
+
 // The panel: collapsed to a rail (Ctrl+B or the » button) and on the right (default) or the left.
 // The arrows point where the panel goes: toward the window's edge to collapse, back out to reopen.
 const panelCollapseButton = document.getElementById('panel-collapse');
@@ -2794,6 +3009,7 @@ renderClock();
 setInterval(() => {
   const now = Date.now();
   for (const span of listEl.querySelectorAll('[data-since]')) span.textContent = formatElapsed(Number(span.dataset.since), now);
+  for (const span of tasksList.querySelectorAll('[data-since]')) span.textContent = formatElapsed(Number(span.dataset.since), now);
   for (const span of approvalsEl.querySelectorAll('[data-expires]')) span.textContent = approvalTimer(Number(span.dataset.expires), now);
   for (const span of limitsEl.querySelectorAll('[data-resets]')) span.textContent = formatReset(Number(span.dataset.resets), now);
   renderAutoApprove(now);
@@ -2841,6 +3057,10 @@ async function start() {
   // Listen before fetching so no change slips between the two.
   await tauri.event.listen('snapshot', (event) => applySnapshot(event.payload));
   await tauri.event.listen('approvals', (event) => applyApprovals(event.payload));
+  await tauri.event.listen('auto_approve', (event) => {
+    autoApproveUntil = event.payload ?? null; // turned on or off from the phone
+    renderAutoApprove();
+  });
   await tauri.event.listen('usage', (event) => applyUsage(event.payload));
   await tauri.event.listen('limit_reset', (event) => celebrateLimitReset(event.payload));
   await tauri.event.listen('music_track', (event) => {
@@ -2867,6 +3087,8 @@ async function start() {
     })
     .catch(() => {});
   applySnapshot(await tauri.core.invoke('get_snapshot'));
+  refreshEditors(); // once the bases are on the map
+  setInterval(refreshEditors, EDITORS_REFRESH_MS);
   applyApprovals(await tauri.core.invoke('get_approvals'));
   autoApproveUntil = (await tauri.core.invoke('get_auto_approve')) ?? null;
   renderAutoApprove();

@@ -138,6 +138,7 @@ Everything is read locally, from Claude Code's files and from git:
 | `git log`, `git rev-list` and the `.git/index` header in your repositories | gold, wood, stone and each base's age |
 | `~/.claude.json`, only `claudeAiMcpEverConnected` (the names of the connectors linked to your Claude account) | the scout's bag |
 | `~/.claude/skills/*/SKILL.md` | the skills the scout can carry |
+| `~/.config/dev.fontenele.agent-of-empires/scout-connectors.json`, only if you create it | connectors of your own for the scout (see the manual) |
 
 | Writes | When |
 |---|---|
@@ -149,7 +150,7 @@ The app's own network call is the plan limits, and only when that option is on: 
 app asks `api.anthropic.com` for your usage, the same request `/usage` makes in Claude Code, with
 Claude Code's own OAuth token. The token is read, never changed, and goes to curl through stdin.
 
-The scout ("O Batedor") reads Slack, Gmail or Notion only once you equip it with them. Each round
+The scout ("O Batedor") reads Slack, Gmail, Notion, Google Drive or Google Calendar only once you equip it with them. Each round
 is a `claude -p` that uses the connectors of your Claude account, with read tools only: built-in
 tools off, your settings files ignored (`--restricted`), write tools denied, no transcript saved.
 A mission keeps a short technical summary and the source links, never the messages, and never
@@ -159,8 +160,14 @@ The phone panel ("Celular", off by default) is the one thing that listens on the
 on, the app serves a small page and a JSON API on port 47380 (another free one if taken), answers
 only private addresses, Tailscale (100.64/10) and localhost, and every API call needs the 256-bit
 pairing code from the QR (kept in `phone.json`, mode 0600). It is plain HTTP: on a shared Wi-Fi,
-use it only over Tailscale. From the phone you can approve or deny prompts, reply to agents the app
-hosts and start one in a listed repository; turning it off closes the port.
+use it only over Tailscale. From the phone you can approve or deny prompts, reply to any waiting agent
+(one in Cursor or a terminal is stopped there and resumed in the app with your message), answer the
+questions of agents the app hosts, turn "approve everything for 10 min" on or off (the map follows) and
+start one in a listed repository; turning it off closes the port. To reach it away from
+home, run a tunnel to that port (Cloudflare Tunnel, say) and put its https domain in the panel's
+"Endereço na internet": the QR then offers an "Internet" link. A tunnel arrives from localhost, so
+only the pairing code guards it: put a login in front (Cloudflare Access). "Invalidar código" cuts
+every paired phone off at once, and "O código vale por" makes each code expire after 1, 7 or 30 days.
 
 Agents started "aqui no app" run `claude` with your permissions. Pushes to `main` are blocked for
 them (`git push origin main`, `HEAD:main`, `--force`). "Encerrar sessão" sends SIGTERM to a session's

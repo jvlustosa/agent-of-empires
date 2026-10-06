@@ -4,10 +4,13 @@
 //!
 //! The token travels in the link's #fragment, which browsers never send: the page keeps it and
 //! sends it as a Bearer header. Plain HTTP, so on a shared Wi-Fi only Tailscale keeps it private.
+//!
+//! An optional internet address (a tunnel such as Cloudflare's, run on this machine) gets its own
+//! link. The tunnel connects from loopback, so past it the token is the only lock: https only.
 
-use crate::approval::{Approvals, Decision};
+use crate::approval::{Approvals, Decision, AUTO_APPROVE_WINDOW};
 use crate::hosted::Hosted;
-use crate::{projects, LatestSnapshot, TASK_MAX_CHARS};
+use crate::{collector, projects, LatestSnapshot, AUTO_APPROVE_EVENT, HANDOFF_WAIT, TASK_MAX_CHARS};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::ffi::CStr;
@@ -19,12 +22,15 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter, Manager};
 
 const STATE_FILE: &str = "phone.json";
 const DEFAULT_PORT: u16 = 47380;
 const TOKEN_BYTES: usize = 32;
+// What "O código vale por" offers; 0 keeps the code until "Invalidar código".
+const TOKEN_LIFETIMES_DAYS: [u32; 4] = [0, 1, 7, 30];
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_HEAD_BYTES: u64 = 16 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
@@ -53,10 +59,16 @@ pub fn init(config_dir: &Path) {
 #[serde(rename_all = "camelCase", default)]
 struct PhoneConfig {
     is_on: bool,
-    /// Pairing secret, hex; empty until first turned on. "Trocar o código" makes a new one.
+    /// Pairing secret, hex; empty until first turned on. "Invalidar código" makes a new one.
     token: String,
+    /// How long each new code lasts, in days; 0 for no limit.
+    token_lifetime_days: u32,
+    /// When the current code stops working, ms since the epoch; 0 for never.
+    token_expires_at: i64,
     /// The port the phone's link points to; kept so the QR stays valid across restarts.
     port: u16,
+    /// "https://host" of a tunnel to this port; empty for the home network only.
+    public_url: String,
 }
 
 impl PhoneConfig {
@@ -83,6 +95,17 @@ impl PhoneConfig {
         };
         write().map_err(|err| format!("Não consegui salvar o celular: {err}"))
     }
+
+    /// A fresh code: the one before stops working at once.
+    fn renew_token(&mut self, now: i64) -> Result<(), String> {
+        self.token = new_token()?;
+        self.token_expires_at = expiry(now, self.token_lifetime_days);
+        Ok(())
+    }
+
+    fn is_token_expired(&self, now: i64) -> bool {
+        self.token_expires_at > 0 && now >= self.token_expires_at
+    }
 }
 
 /// What the "Celular" panel shows. The links carry the token: they only go to the app's own window.
@@ -91,6 +114,9 @@ impl PhoneConfig {
 pub struct PhoneStatus {
     is_on: bool,
     port: Option<u16>,
+    public_url: String,
+    token_lifetime_days: u32,
+    token_expires_at: Option<i64>,
     links: Vec<Link>,
     last_seen_at: Option<i64>,
     error: Option<String>,
@@ -137,17 +163,54 @@ impl Phone {
     }
 
     fn status(&self) -> PhoneStatus {
-        let (is_on, token) = self.config.lock().map(|c| (c.is_on, c.token.clone())).unwrap_or_default();
+        self.renew_expired_token();
+        let (is_on, token, public_url, token_lifetime_days, token_expires_at) = self
+            .config
+            .lock()
+            .map(|c| (c.is_on, c.token.clone(), c.public_url.clone(), c.token_lifetime_days, c.token_expires_at))
+            .unwrap_or_default();
         let port = *self.serving.lock().unwrap();
-        let links = match port {
-            Some(port) => home_addresses()
-                .into_iter()
-                .map(|(network, ip)| Link { network, address: format!("{ip}:{port}"), url: format!("http://{ip}:{port}/#t={token}") })
-                .collect(),
-            None => Vec::new(),
-        };
+        let mut links = Vec::new();
+        if let Some(port) = port {
+            // First: it works at home and away, and a page paired on it keeps working on both.
+            if let Some(host) = public_url.strip_prefix("https://") {
+                links.push(Link { network: "Internet", address: host.to_string(), url: format!("{public_url}/#t={token}") });
+            }
+            links.extend(home_addresses().into_iter().map(|(network, ip)| Link {
+                network,
+                address: format!("{ip}:{port}"),
+                url: format!("http://{ip}:{port}/#t={token}"),
+            }));
+        }
         let last_seen_at = Some(self.last_seen_at.load(Ordering::Relaxed)).filter(|&at| at > 0);
-        PhoneStatus { is_on, port, links, last_seen_at, error: self.error.lock().ok().and_then(|e| e.clone()) }
+        PhoneStatus {
+            is_on,
+            port,
+            public_url,
+            token_lifetime_days,
+            token_expires_at: Some(token_expires_at).filter(|&at| at > 0),
+            links,
+            last_seen_at,
+            error: self.error.lock().ok().and_then(|e| e.clone()),
+        }
+    }
+
+    /// An expired code already fails every call (is_paired); this only spares the panel a dead QR.
+    fn renew_expired_token(&self) {
+        let Ok(mut config) = self.config.lock() else { return };
+        let now = now_ms();
+        if !config.is_token_expired(now) {
+            return;
+        }
+        let result = config.renew_token(now).and_then(|()| config.save());
+        drop(config);
+        match result {
+            Ok(()) => self.last_seen_at.store(0, Ordering::Relaxed),
+            Err(err) => {
+                eprintln!("[phone] expired code not renewed: {err}");
+                *self.error.lock().unwrap() = Some(err);
+            }
+        }
     }
 
     fn start(self: &Arc<Self>) {
@@ -160,8 +223,8 @@ impl Phone {
 
     fn listen(self: &Arc<Self>) -> Result<(), String> {
         let mut config = self.config.lock().map_err(|_| "Estado indisponível".to_string())?;
-        if config.token.is_empty() {
-            config.token = new_token()?;
+        if config.token.is_empty() || config.is_token_expired(now_ms()) {
+            config.renew_token(now_ms())?;
             config.save()?;
         }
         let wanted = if config.port == 0 { DEFAULT_PORT } else { config.port };
@@ -248,7 +311,10 @@ impl Phone {
     fn is_paired(&self, request: &Request) -> bool {
         let Some(given) = request.authorization.as_deref().and_then(|value| value.strip_prefix("Bearer ")) else { return false };
         let config = self.config.lock().unwrap();
-        config.is_on && !config.token.is_empty() && same_secret(given.trim().as_bytes(), config.token.as_bytes())
+        config.is_on
+            && !config.token.is_empty()
+            && !config.is_token_expired(now_ms())
+            && same_secret(given.trim().as_bytes(), config.token.as_bytes())
     }
 
     fn api(&self, request: &Request, route: &[&str]) -> Result<Response, (u16, String)> {
@@ -264,17 +330,30 @@ impl Phone {
                 if answer.decision == Decision::Ask {
                     return Err((400, "Do celular, só aprovar ou negar".into()));
                 }
-                let approvals = self.app.try_state::<Arc<Approvals>>().ok_or((503, "Aprovações indisponíveis".to_string()))?;
-                if !approvals.resolve(id, answer.decision, answer.answers) {
+                if !self.approvals()?.resolve(id, answer.decision, answer.answers) {
                     return Err((409, "Esse pedido já foi respondido ou expirou".into()));
                 }
                 Ok(Response::json(&json!({ "ok": true })))
             }
+            ("POST", ["auto-approve"]) => {
+                let order: AutoApprove = parse_body(&request.body)?;
+                let until = self.approvals()?.set_auto_allow(order.is_on.then_some(AUTO_APPROVE_WINDOW));
+                // The map on the computer shows the same countdown, whoever turned it on.
+                if let Err(err) = self.app.emit(AUTO_APPROVE_EVENT, until) {
+                    eprintln!("[phone] auto-approve not shown on the map: {err}");
+                }
+                Ok(Response::json(&json!({ "autoApproveUntil": until })))
+            }
             ("POST", ["agents", session_id, "reply"]) => {
                 let reply: Reply = parse_body(&request.body)?;
                 let text = checked_text(&reply.text, "Escreva a mensagem")?;
-                self.hosted()?.send(session_id, text).map_err(|err| (409, err))?;
-                Ok(Response::json(&json!({ "ok": true })))
+                let hosted = self.hosted()?;
+                if hosted.pid_of(session_id).is_some() {
+                    hosted.send(session_id, text).map_err(|err| (409, err))?;
+                    return Ok(Response::json(&json!({ "message": "Mensagem enviada ao agente" })));
+                }
+                let host = self.take_over(&hosted, session_id, text)?;
+                Ok(Response::json(&json!({ "message": format!("Agente trazido do {host} para o app, já com a sua mensagem") })))
             }
             ("POST", ["agents"]) => {
                 let order: NewAgent = parse_body(&request.body)?;
@@ -289,6 +368,38 @@ impl Phone {
             }
             _ => Err((404, "Rota não encontrada".into())),
         }
+    }
+
+    /// An agent waiting in Cursor or a terminal: nothing outside can type into those, so its process
+    /// stops and the same conversation goes on here with `text` as the next turn. Never mid-turn.
+    fn take_over(&self, hosted: &Arc<Hosted>, session_id: &str, text: &str) -> Result<String, (u16, String)> {
+        let agent = self
+            .app
+            .try_state::<LatestSnapshot>()
+            .and_then(|latest| latest.0.lock().ok()?.as_ref()?.agents.iter().find(|a| a.id == session_id).cloned())
+            .ok_or((404, "Esse agente não está mais aberto".to_string()))?;
+        let host = agent.editor.unwrap_or("terminal");
+        if agent.status != "idle" {
+            return Err((409, format!("Esse agente está trabalhando no {host}: responda quando ele parar")));
+        }
+        let cwd = PathBuf::from(&agent.cwd);
+        if !cwd.is_dir() {
+            return Err((409, "A pasta desse agente não existe mais".into()));
+        }
+        collector::terminate_session(session_id).map_err(|err| (409, err))?;
+        let deadline = Instant::now() + HANDOFF_WAIT;
+        while collector::pid_exists(agent.pid) {
+            if Instant::now() > deadline {
+                return Err((500, format!("O agente não saiu do {host} a tempo; tente de novo")));
+            }
+            thread::sleep(Duration::from_millis(200));
+        }
+        hosted.spawn(&cwd, text, Some(session_id)).map_err(|err| (500, err))?;
+        Ok(host.to_string())
+    }
+
+    fn approvals(&self) -> Result<Arc<Approvals>, (u16, String)> {
+        self.app.try_state::<Arc<Approvals>>().map(|a| a.inner().clone()).ok_or((503, "Aprovações indisponíveis".into()))
     }
 
     fn hosted(&self) -> Result<Arc<Hosted>, (u16, String)> {
@@ -320,8 +431,10 @@ impl Phone {
                 })
             })
             .collect();
-        let approvals = self.app.try_state::<Arc<Approvals>>().map(|a| a.list()).unwrap_or_default();
-        json!({ "agents": agents, "approvals": approvals, "now": now_ms() })
+        let approvals = self.app.try_state::<Arc<Approvals>>();
+        let auto_approve_until = approvals.as_ref().and_then(|a| a.auto_allow_until());
+        let approvals = approvals.map(|a| a.list()).unwrap_or_default();
+        json!({ "agents": agents, "approvals": approvals, "autoApproveUntil": auto_approve_until, "now": now_ms() })
     }
 }
 
@@ -329,6 +442,12 @@ impl Phone {
 struct ApprovalAnswer {
     decision: Decision,
     answers: Option<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AutoApprove {
+    is_on: bool,
 }
 
 #[derive(Deserialize)]
@@ -455,9 +574,35 @@ fn new_token() -> Result<String, String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
+fn expiry(now: i64, lifetime_days: u32) -> i64 {
+    if lifetime_days == 0 {
+        0
+    } else {
+        now + i64::from(lifetime_days) * DAY_MS
+    }
+}
+
 /// Compares in constant time, so the answer's timing says nothing about the token.
 fn same_secret(given: &[u8], expected: &[u8]) -> bool {
     given.len() == expected.len() && given.iter().zip(expected).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+}
+
+/// "agents.example.com" or "https://agents.example.com/" become "https://agents.example.com".
+fn normalized_public_url(text: &str) -> Result<String, String> {
+    let text = text.trim().trim_end_matches('/');
+    if text.is_empty() {
+        return Ok(String::new());
+    }
+    let host = match text.split_once("://") {
+        Some((scheme, host)) if scheme.eq_ignore_ascii_case("https") => host,
+        Some(_) => return Err("Use um endereço https: pela internet o código do celular não pode ir aberto".into()),
+        None => text,
+    };
+    let is_host = !host.is_empty() && host.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':'));
+    if !is_host {
+        return Err("Endereço inválido: use só o domínio, como agentes.seudominio.com.br".into());
+    }
+    Ok(format!("https://{}", host.to_ascii_lowercase()))
 }
 
 fn is_tailscale(ip: Ipv4Addr) -> bool {
@@ -544,14 +689,41 @@ pub fn set_phone(is_on: bool, phone: tauri::State<Arc<Phone>>) -> Result<PhoneSt
     Ok(phone.status())
 }
 
-/// A new pairing code: the phone paired before stops working until it scans the new QR.
+/// "Invalidar código": every phone paired before stops working until it scans the new QR.
 #[tauri::command]
 pub fn reset_phone_token(phone: tauri::State<Arc<Phone>>) -> Result<PhoneStatus, String> {
     let mut config = phone.config.lock().map_err(|_| "Estado indisponível".to_string())?;
-    config.token = new_token()?;
+    config.renew_token(now_ms())?;
     config.save()?;
     drop(config);
     phone.last_seen_at.store(0, Ordering::Relaxed);
+    Ok(phone.status())
+}
+
+/// The tunnel's address for the "Internet" link; empty leaves only the home network.
+#[tauri::command]
+pub fn set_phone_public_url(url: String, phone: tauri::State<Arc<Phone>>) -> Result<PhoneStatus, String> {
+    let public_url = normalized_public_url(&url)?;
+    {
+        let mut config = phone.config.lock().map_err(|_| "Estado indisponível".to_string())?;
+        config.public_url = public_url;
+        config.save()?;
+    }
+    Ok(phone.status())
+}
+
+/// "O código vale por": counts from now, so the phone paired today keeps the whole period.
+#[tauri::command]
+pub fn set_phone_token_lifetime(days: u32, phone: tauri::State<Arc<Phone>>) -> Result<PhoneStatus, String> {
+    if !TOKEN_LIFETIMES_DAYS.contains(&days) {
+        return Err("Prazo do código inválido".into());
+    }
+    {
+        let mut config = phone.config.lock().map_err(|_| "Estado indisponível".to_string())?;
+        config.token_lifetime_days = days;
+        config.token_expires_at = expiry(now_ms(), days);
+        config.save()?;
+    }
     Ok(phone.status())
 }
 
@@ -580,6 +752,31 @@ mod tests {
         assert_eq!(network_label("enp3s0", "192.168.0.13".parse().unwrap()), Some("Cabo"));
         assert_eq!(network_label("tailscale0", "100.90.1.2".parse().unwrap()), Some("Tailscale"));
         assert_eq!(network_label("wlan0", "8.8.8.8".parse().unwrap()), None);
+    }
+
+    #[test]
+    fn the_internet_address_is_a_bare_https_host() {
+        assert_eq!(normalized_public_url(" agents.example.com.br/ ").unwrap(), "https://agents.example.com.br");
+        assert_eq!(normalized_public_url("HTTPS://Agents.Example.com").unwrap(), "https://agents.example.com");
+        assert_eq!(normalized_public_url("").unwrap(), "");
+        assert!(normalized_public_url("http://agents.example.com").is_err());
+        assert!(normalized_public_url("https://agents.example.com/painel").is_err());
+        assert!(normalized_public_url("agents.example.com/#t=abc").is_err());
+    }
+
+    #[test]
+    fn codes_stop_working_after_their_lifetime() {
+        let now = 1_000_000;
+        let mut config = PhoneConfig::default();
+        config.renew_token(now).unwrap();
+        assert!(!config.is_token_expired(now + 365 * DAY_MS), "no limit by default");
+
+        config.token_lifetime_days = 7;
+        let before = config.token.clone();
+        config.renew_token(now).unwrap();
+        assert_ne!(config.token, before);
+        assert!(!config.is_token_expired(now + 7 * DAY_MS - 1));
+        assert!(config.is_token_expired(now + 7 * DAY_MS));
     }
 
     #[test]

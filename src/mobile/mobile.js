@@ -26,7 +26,11 @@ const replyTitle = document.getElementById('reply-title');
 const replyLast = document.getElementById('reply-last');
 const replyText = document.getElementById('reply-text');
 const replySubmit = document.getElementById('reply-submit');
+const replyMove = document.getElementById('reply-move');
 const toastEl = document.getElementById('toast');
+const autoEl = document.getElementById('auto');
+const autoText = document.getElementById('auto-text');
+const autoToggle = document.getElementById('auto-toggle');
 
 let token = takeTokenFromLink() ?? readToken();
 let state = null;
@@ -117,6 +121,7 @@ function showPairing(message) {
   approvalsKey = null;
   pairEl.hidden = false;
   if (message) pairText.textContent = message;
+  autoEl.hidden = true;
   approvalsBlock.hidden = true;
   agentsBlock.hidden = true;
   newOpen.hidden = true;
@@ -172,11 +177,42 @@ function attentionRank(agent) {
 function render() {
   pairEl.hidden = true;
   newOpen.hidden = false;
+  renderAutoApprove();
   renderApprovals();
   renderAgents();
   const waiting = state.approvals.length;
   document.title = waiting ? `(${waiting}) ${PAGE_TITLE}` : PAGE_TITLE;
 }
+
+// The same switch as on the computer's map: whichever side turns it on, both count down.
+function renderAutoApprove() {
+  const until = state.autoApproveUntil ?? null;
+  const isOn = until !== null && until > state.now;
+  autoEl.hidden = false;
+  autoEl.classList.toggle('is-on', isOn);
+  autoToggle.setAttribute('aria-pressed', String(isOn));
+  autoToggle.textContent = isOn ? 'Parar' : 'Ligar';
+  if (!isOn) {
+    autoText.textContent = 'Aprovar tudo sozinho por 10 min. Perguntas e planos continuam com você.';
+    return;
+  }
+  const seconds = Math.ceil((until - state.now) / 1000);
+  autoText.textContent = `Aprovando tudo sozinho · faltam ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+autoToggle.addEventListener('click', async () => {
+  const isOn = autoToggle.getAttribute('aria-pressed') !== 'true';
+  autoToggle.disabled = true;
+  try {
+    await api('auto-approve', { isOn });
+    showToast(isOn ? 'Aprovando tudo sozinho por 10 min' : 'Aprovação automática desligada');
+    poll();
+  } catch (err) {
+    showToast(err.message, true);
+  } finally {
+    autoToggle.disabled = false;
+  }
+});
 
 // Rebuilt only when the prompts change, so a half-filled answer survives the polls.
 function renderApprovals() {
@@ -303,13 +339,9 @@ function renderAgent(agent) {
   item.append(el('p', 'activity', agent.activity.label || info.label));
   if (!isYourTurn(agent)) return item;
   if (agent.lastReply) item.append(el('p', 'excerpt', agent.lastReply));
-  if (agent.isHosted) {
-    const actions = el('div', 'actions');
-    actions.append(button('btn btn-primary', 'Responder', () => openReply(agent)));
-    item.append(actions);
-  } else {
-    item.append(el('p', 'note', `Para responder, use o ${agent.host ?? 'terminal'} no computador.`));
-  }
+  const actions = el('div', 'actions');
+  actions.append(button('btn btn-primary', 'Responder', () => openReply(agent)));
+  item.append(actions);
   return item;
 }
 
@@ -318,6 +350,9 @@ function openReply(agent) {
   replyTitle.textContent = `Responder · ${agentName(agent)}`;
   replyLast.textContent = agent.lastReply ?? '';
   replyLast.hidden = !agent.lastReply;
+  // Nothing outside can type into Cursor or a terminal: the reply moves the conversation to the app.
+  replyMove.hidden = agent.isHosted;
+  replyMove.textContent = `A conversa sai do ${agent.host ?? 'terminal'} e continua no app do computador, já com a sua mensagem.`;
   replyDialog.showModal();
   replyText.focus();
 }
@@ -328,10 +363,10 @@ document.getElementById('reply-form').addEventListener('submit', async (event) =
   if (!text) return;
   replySubmit.disabled = true;
   try {
-    await api(`agents/${encodeURIComponent(replyingTo)}/reply`, { text });
+    const result = await api(`agents/${encodeURIComponent(replyingTo)}/reply`, { text });
     replyText.value = '';
     replyDialog.close();
-    showToast('Mensagem enviada ao agente');
+    showToast(result.message ?? 'Mensagem enviada ao agente');
     poll();
   } catch (err) {
     showToast(err.message, true);

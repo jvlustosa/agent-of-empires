@@ -386,14 +386,14 @@ fn is_process_alive(pid: u32, proc_start: Option<&Value>) -> bool {
 }
 
 #[cfg(unix)]
-fn pid_exists(pid: u32) -> bool {
+pub(crate) fn pid_exists(pid: u32) -> bool {
     // SAFETY: signal 0 only checks for existence/permission, nothing is delivered.
     let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
     rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 #[cfg(not(unix))]
-fn pid_exists(_pid: u32) -> bool {
+pub(crate) fn pid_exists(_pid: u32) -> bool {
     true
 }
 

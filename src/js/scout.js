@@ -11,6 +11,8 @@ import { KNIGHT_ARMOR, drawKnightAura, drawKnightPortrait, drawSlackShield, knig
 // Same as scout::LEVEL_XP and scout::SKILL_SLOT_LEVELS in the backend.
 const LEVEL_XP = [0, 60, 180, 400, 750, 1250, 2000];
 const SKILL_SLOT_LEVELS = [1, 3, 5];
+const SKILL_MAX = 8000; // scout::SKILL_MAX: what a round reads of each skill
+const SKILL_SEARCH_MIN = 7; // fewer skills than this need no search box
 const ARMOR_NAMES = ['Couro', 'Ferro', 'Aço', 'Ouro'];
 const LEVEL_TITLES = ['Escudeiro', 'Batedor', 'Cavaleiro', 'Cavaleiro veterano', 'Paladino', 'Campeão', 'Lenda da aldeia'];
 const CONNECTORS = [
@@ -18,7 +20,9 @@ const CONNECTORS = [
   { id: 'gmail', name: 'Gmail', label: 'Busca', placeholder: 'label:clientes is:unread', hint: 'Uma busca do Gmail: ele lê as conversas novas que caem nela.' },
   { id: 'notion', name: 'Notion', label: 'Páginas', placeholder: 'Roadmap, Bugs do produto', hint: 'Páginas ou bancos de dados do Notion para acompanhar.' },
   { id: 'drive', name: 'Google Drive', label: 'Arquivos', placeholder: 'Specs do produto, Feedback de clientes', hint: 'Pastas ou documentos do Drive: ele lê os que mudaram desde a última ronda.' },
+  { id: 'calendar', name: 'Google Calendar', label: 'Agendas', placeholder: 'primary, time@empresa.com', hint: 'Agendas a acompanhar (primary é a sua): ele lê a descrição das reuniões que aconteceram desde a última ronda.' },
 ];
+// The connectors of scout-connectors.json (in the app's config folder) join the list at startup.
 // Where each connector goes when it has no slot yet (state saved before slots could be chosen).
 const DEFAULT_CONNECTOR_SLOTS = { slack: 'shield', gmail: 'lance', notion: 'cape', drive: 'boots' };
 // The window's slots, as Ragnarok lays them out: the head carries skills (the mind); the hands, the
@@ -53,6 +57,7 @@ const ICONS = {
   notion: '<rect x="1" y="0" width="7" height="9" fill="#f6f3ec"/><rect x="1" y="0" width="7" height="1" fill="#1f2937"/><rect x="1" y="8" width="7" height="1" fill="#1f2937"/><rect x="2" y="2" width="1" height="5" fill="#1f2937"/><rect x="6" y="2" width="1" height="5" fill="#1f2937"/><rect x="3" y="3" width="1" height="1" fill="#1f2937"/><rect x="4" y="4" width="1" height="1" fill="#1f2937"/><rect x="5" y="5" width="1" height="1" fill="#1f2937"/>',
   plug: '<rect x="2" y="0" width="1" height="3" fill="#9aa3ad"/><rect x="6" y="0" width="1" height="3" fill="#9aa3ad"/><rect x="1" y="3" width="7" height="3" fill="#6b7280"/><rect x="3" y="6" width="3" height="1" fill="#6b7280"/><rect x="4" y="7" width="1" height="2" fill="#4b5563"/>',
   drive: '<rect x="3" y="1" width="3" height="1" fill="#2eb67d"/><rect x="2" y="2" width="3" height="2" fill="#2eb67d"/><rect x="5" y="2" width="2" height="2" fill="#ecb22e"/><rect x="1" y="4" width="3" height="2" fill="#2eb67d"/><rect x="6" y="4" width="2" height="2" fill="#ecb22e"/><rect x="0" y="6" width="2" height="1" fill="#2eb67d"/><rect x="2" y="6" width="7" height="2" fill="#36c5f0"/>',
+  calendar: '<rect x="0" y="1" width="9" height="2" fill="#36c5f0"/><rect x="2" y="0" width="1" height="2" fill="#9aa3ad"/><rect x="6" y="0" width="1" height="2" fill="#9aa3ad"/><rect x="0" y="3" width="9" height="6" fill="#f6f3ec"/><rect x="2" y="4" width="1" height="1" fill="#1f2937"/><rect x="4" y="4" width="1" height="1" fill="#1f2937"/><rect x="6" y="4" width="1" height="1" fill="#1f2937"/><rect x="2" y="6" width="1" height="1" fill="#1f2937"/><rect x="4" y="6" width="1" height="1" fill="#1f2937"/><rect x="6" y="6" width="1" height="1" fill="#e01e5a"/>',
   skill: '<rect x="1" y="1" width="7" height="1" fill="#a07c3c"/><rect x="0" y="2" width="9" height="5" fill="#f3e2b3"/><rect x="1" y="7" width="7" height="1" fill="#a07c3c"/><rect x="2" y="3" width="5" height="1" fill="#b08d4f"/><rect x="2" y="5" width="3" height="1" fill="#b08d4f"/>',
 };
 const SEVERITY_LABELS = { critical: 'Crítica', high: 'Alta', normal: 'Normal', low: 'Baixa' };
@@ -103,7 +108,7 @@ function icon(name) {
 }
 
 function connectorIcon(id) {
-  if (id !== 'slack') return icon(['gmail', 'notion', 'drive'].includes(id) ? id : 'plug');
+  if (id !== 'slack') return icon(['gmail', 'notion', 'drive', 'calendar'].includes(id) ? id : 'plug');
   const canvas = el('canvas');
   canvas.width = 9;
   canvas.height = 9;
@@ -126,6 +131,11 @@ function switchLabel(isOn, text, onChange) {
   track.setAttribute('aria-hidden', 'true');
   label.append(input, track, text);
   return label;
+}
+
+// For searching: lower case, no accents.
+function fold(text) {
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
 function levelTitle(level) {
@@ -221,10 +231,23 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
   let state = null;
   let skills = null; // the user's Claude Code skills, read when the equipment window first opens
   let linked = null; // connectors linked to the user's Claude account: the bag
-  let draft = null; // equipment being edited, saved with "Salvar equipamento"
+  let draft = null; // equipment being edited, saved with "Salvar equipamento" or on closing
+  let isSaving = false;
   let selectedSlot = 'shield';
+  let skillQuery = ''; // the skill search, shared by the slot's list and the bag, kept across redraws
+  const skillTexts = new Map(); // skill name → { body, saved, path }: instructions opened to edit
+  let editingSkill = null; // the skill whose instructions are open under the window
   const openFlows = new Set(); // routines (by index) whose form is open in the Rotinas tab
   let heroTimer = null;
+  // The connectors of scout-connectors.json, read once: the panel waits for them before opening.
+  const extrasRead = invoke('list_scout_extra_connectors').then(
+    ({ connectors, error }) => {
+      CONNECTORS.push(...connectors);
+      if (error) showToast(error, true);
+      if (state) renderStrip();
+    },
+    () => {}, // without them the built-in connectors still work
+  );
   let filterProject = null;
   let returnFocus = null;
   let lastVillage = '';
@@ -254,6 +277,7 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
   // The knight in the middle of the window, with its aura, the pennant flapping while it is open. In
   // 3D it is the map's own hero, turning; elsewhere, the pixel art.
   function drawHero() {
+    if (document.getElementById('ro-general').hidden) return; // the bag is in front of it
     const canvas = document.getElementById('ro-hero');
     const canvas3d = document.getElementById('ro-hero-3d');
     const world3d = getHero3d();
@@ -468,7 +492,7 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     const hasConnector = state.equipment.connectors.some((connector) => connector.isOn);
     sendButton.disabled = state.isScouting || !hasConnector;
     sendButton.textContent = state.isScouting ? 'Em campo…' : 'Enviar batedor';
-    sendButton.title = hasConnector ? 'Uma ronda agora pelas fontes equipadas' : 'Equipe um conector primeiro: escudo (Slack), lança (Gmail) ou capa (Notion)';
+    sendButton.title = hasConnector ? 'Uma ronda agora pelas fontes equipadas' : 'Equipe um conector primeiro: escudo, lança, capa ou botas';
     renderMissions();
     renderJournal();
     renderEquipment();
@@ -545,9 +569,8 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     const actions = el('div', 'mission-actions');
     if (mission.status === 'open') {
       for (const repo of mission.repos) {
-        const train = button('btn btn-primary', `Treinar aldeão em ${displayName(repo)}`, () => {
-          close();
-          onTrain(mission, repo);
+        const train = button('btn btn-primary', `Treinar aldeão em ${displayName(repo)}`, async () => {
+          if (await close()) onTrain(mission, repo);
         });
         train.title = 'Abre o Novo agente com a tarefa preenchida: leia e ajuste antes de mandar';
         actions.append(train);
@@ -610,15 +633,16 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     return equip.connectors.find((connector) => connector.slot === slotId) ?? null;
   }
 
-  // Into a slot (from the bag or the slot's list); the one there goes back to the bag.
+  // Into a slot (from the bag or the slot's list); the one there goes back to the bag. From the bag it
+  // reads when it already knows what to; moved from another slot it stays on or off. The caller redraws.
   function placeConnector(id, slotId) {
+    selectedSlot = slotId;
+    if (connectorIn(equipment(), slotId)?.id === id) return;
     const equip = edit();
     for (const connector of equip.connectors) if (connector.slot === slotId) Object.assign(connector, { slot: '', isOn: false });
     const connector = equip.connectors.find((c) => c.id === id);
+    if (!connector.slot) connector.isOn = connector.targets.trim() !== '';
     connector.slot = slotId;
-    connector.isOn = connector.targets.trim() !== '';
-    selectedSlot = slotId;
-    renderEquipment();
   }
 
   function equipment() {
@@ -630,8 +654,69 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     return draft;
   }
 
-  function markDirty() {
-    document.getElementById('ro-dirty').textContent = 'Alterações por salvar.';
+  // Against what is saved, so undoing a change by hand clears it too; lastRunAt moves on its own.
+  function isEquipmentDirty() {
+    const key = (equip) => JSON.stringify(equip, (name, value) => (name === 'lastRunAt' ? undefined : value));
+    return draft !== null && key(draft) !== key(cloneEquipment());
+  }
+
+  function dirtySkills() {
+    return [...skillTexts].filter(([, text]) => text.body !== text.saved).map(([name]) => name);
+  }
+
+  // Skill instructions join the equipment's draft: one Salvar, one Desfazer, saved on closing.
+  function isDirty() {
+    return isEquipmentDirty() || dirtySkills().length > 0;
+  }
+
+  function renderDirty() {
+    if (!isEquipmentDirty()) draft = null;
+    const skillsPending = dirtySkills().map((name) => `instruções de ${name}`);
+    const pending = [...(draft && skillsPending.length ? ['equipamento'] : []), ...skillsPending];
+    document.getElementById('ro-dirty').textContent = !isDirty() ? '' : pending.length ? `Por salvar: ${pending.join(', ')}.` : 'Alterações por salvar.';
+    for (const id of ['scout-equip-save', 'scout-flows-save']) document.getElementById(id).disabled = !isDirty();
+    for (const node of dialog.querySelectorAll('.scout-discard')) node.hidden = !isDirty();
+  }
+
+  // Back to what is saved; an open skill editor stays open, with the text of its file.
+  function discard() {
+    draft = null;
+    for (const text of skillTexts.values()) text.body = text.saved;
+    renderEquipment();
+    renderFlows();
+  }
+
+  // Every change redraws the window; the control that had focus (and its caret) comes back, so clicks,
+  // tabbing and typing carry on as if nothing was replaced. Controls are found again by data-key.
+  function keepFocus(draw) {
+    const active = dialog.contains(document.activeElement) ? document.activeElement : null;
+    const key = active?.dataset.key;
+    const isEquipment = Boolean(active?.closest('#scout-equipment-panel'));
+    const caret = typeof active?.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
+    draw();
+    if (!active || active.isConnected) return;
+    // What was removed ("Tirar do espaço") hands focus to the slot it was about.
+    const next = (key && dialog.querySelector(`[data-key="${CSS.escape(key)}"]`)) || (isEquipment ? slotNode(selectedSlot) : null);
+    next?.focus({ preventScroll: true });
+    if (caret && next?.setSelectionRange) next.setSelectionRange(...caret);
+  }
+
+  function slotNode(slotId) {
+    return dialog.querySelector(`[data-key="slot:${slotId}"]`);
+  }
+
+  // From the bag or the routines: the window turns to the knight with that slot picked.
+  function showSlot(slotId) {
+    selectedSlot = slotId;
+    selectRoTab('ro-tab-general');
+    renderEquipment();
+    slotNode(slotId)?.focus({ preventScroll: true });
+  }
+
+  // From the Habilidades tab: the equipment window, with that slot picked.
+  function goToSlot(slotId) {
+    selectTab('scout-tab-equipment');
+    showSlot(slotId);
   }
 
   // What a slot holds now: { name, note, icon, isLocked, isOff }, or null when it is empty.
@@ -663,6 +748,7 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
       selectedSlot = slot.id;
       renderEquipment();
     });
+    node.dataset.key = `slot:${slot.id}`;
     node.setAttribute('aria-pressed', String(selectedSlot === slot.id));
     node.classList.toggle('is-empty', !item);
     node.classList.toggle('is-locked', Boolean(item?.isLocked));
@@ -681,14 +767,20 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
 
   function renderEquipment() {
     if (!state) return;
-    const equip = equipment();
+    keepFocus(() => {
+      const equip = equipment();
+      renderSlots(equip);
+      drawHero();
+      renderStatus(equip);
+      renderDetail(equip);
+      renderBag(equip);
+    });
+    renderDirty();
+  }
+
+  function renderSlots(equip) {
     document.getElementById('ro-slots-left').replaceChildren(...SLOTS.filter((s) => s.side === 'left').map((slot) => slotButton(slot, equip)));
     document.getElementById('ro-slots-right').replaceChildren(...SLOTS.filter((s) => s.side === 'right').map((slot) => slotButton(slot, equip)));
-    drawHero();
-    renderStatus(equip);
-    renderDetail(equip);
-    renderBag(equip);
-    document.getElementById('ro-dirty').textContent = draft ? 'Alterações por salvar.' : '';
   }
 
   // Ragnarok's six attributes, each one a real count of what the scout did.
@@ -712,7 +804,7 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
       ['Nível', `${state.level} · ${levelTitle(state.level)}`],
       ['XP', to ? `${state.xp} / ${to}` : `${state.xp}`],
       ['Missões', state.missions.filter((m) => m.status === 'open').length],
-      ['Fontes', `${equip.connectors.filter((c) => c.isOn).length} / ${CONNECTORS.length}`],
+      ['Fontes', `${equip.connectors.filter((c) => c.isOn).length} / ${SLOTS.filter((s) => s.kind === 'connector').length}`],
       ['Rotinas', `${equip.routines.filter((r) => r.isOn).length} / ${MAX_ROUTINES}`],
       ['Aldeia', `${state.village.length} bases`],
     ];
@@ -747,7 +839,11 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
       const isHere = connector?.slot === slot.id;
       const elsewhere = connector?.slot && !isHere ? SLOTS.find((s) => s.id === connector.slot).name.toLowerCase() : null;
       const isLinked = !linked || linked.some((item) => item.id === spec.id);
-      const pick = button('ro-pick-item', undefined, () => placeConnector(spec.id, slot.id));
+      const pick = button('ro-pick-item', undefined, () => {
+        placeConnector(spec.id, slot.id);
+        renderEquipment();
+      });
+      pick.dataset.key = `pick:${spec.id}`;
       pick.setAttribute('aria-pressed', String(isHere));
       const note = isHere ? 'neste espaço' : elsewhere ? `está em: ${elsewhere} (trazer para cá)` : isLinked ? spec.hint : 'não aparece vinculado ao seu Claude';
       const text = el('span');
@@ -770,17 +866,30 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
       edit().connectors.find((c) => c.id === spec.id).isOn = isOn;
       renderEquipment();
     });
+    const switchInput = toggle.querySelector('input');
+    switchInput.dataset.key = `on:${spec.id}`;
+    switchInput.disabled = connector.targets.trim() === ''; // nothing to read yet: typing turns it on
     const field = el('input', 'field');
     field.type = 'text';
     field.spellcheck = false;
     field.value = connector.targets;
     field.placeholder = spec.placeholder;
+    field.dataset.key = `targets:${spec.id}`;
     field.setAttribute('aria-label', `${spec.name}: ${spec.label}`);
+    // Typing redraws all but this form: rebuilt on blur, it would eat the click that caused the blur.
     field.addEventListener('input', () => {
-      edit().connectors.find((c) => c.id === spec.id).targets = field.value;
-      markDirty();
+      const equip = edit();
+      const target = equip.connectors.find((c) => c.id === spec.id);
+      const isEmpty = field.value.trim() === '';
+      if ((target.targets.trim() === '') !== isEmpty) target.isOn = !isEmpty; // the first target turns it on, none turns it off
+      target.targets = field.value;
+      switchInput.checked = target.isOn;
+      switchInput.disabled = isEmpty;
+      renderSlots(equip);
+      renderStatus(equip);
+      renderBag(equip);
+      renderDirty();
     });
-    field.addEventListener('change', renderEquipment);
     const parts = [el('p', 'ro-detail-item', spec.name), toggle, el('span', 'field-label', spec.label), field, el('small', 'ro-detail-hint', spec.hint)];
     if (linked && !linked.some((item) => item.id === spec.id)) {
       parts.push(el('p', 'ro-detail-warn', `O ${spec.name} não aparece vinculado ao seu Claude. Vincule em claude.ai › Configurações › Conectores.`));
@@ -797,6 +906,10 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     return parts;
   }
 
+  function skillSlot(index) {
+    return SLOTS.find((s) => s.kind === 'skill' && s.index === index);
+  }
+
   function skillDetail(slot, equip) {
     if (slot.index >= state.skillSlots) {
       const level = SKILL_SLOT_LEVELS[slot.index];
@@ -805,34 +918,144 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     if (skills === null) return [el('p', 'ro-detail-hint', 'Lendo suas skills…')];
     if (skills.length === 0) return [el('p', 'ro-detail-hint', 'Nenhuma skill em ~/.claude/skills.')];
     const current = equip.skills[slot.index] ?? null;
+    if (!current) {
+      return [el('p', 'ro-detail-hint', 'As instruções da skill vão com ele em cada ronda e guiam como julga e escreve as missões. Escolha qual vai neste espaço:'), ...skillPicker(slot, equip)];
+    }
+    const skill = skills.find((s) => s.name === current);
+    const parts = [el('p', 'ro-detail-item', current)];
+    if (!skill) parts.push(el('p', 'ro-detail-warn', 'Essa skill não está mais em ~/.claude/skills: troque ou tire antes de salvar.'));
+    else if (editingSkill === current) parts.push(...skillEditor(current));
+    else {
+      if (skill.description) parts.push(el('p', 'ro-detail-hint', skill.description));
+      parts.push(showSkillSize(el('p'), skill.chars), button('btn', 'Editar instruções', () => editSkill(current)));
+    }
+    const swap = el('details', 'ro-swap');
+    swap.append(el('summary', null, 'Trocar por outra skill'), ...skillPicker(slot, equip));
+    parts.push(
+      swap,
+      button('btn btn-ghost', 'Tirar a skill', () => {
+        edit().skills.splice(slot.index, 1);
+        if (editingSkill === current) editingSkill = null;
+        renderEquipment();
+      }),
+    );
+    return parts;
+  }
+
+  // Every skill it can carry, the one in this slot pressed; with a search box when there are many.
+  function skillPicker(slot, equip) {
+    const current = equip.skills[slot.index] ?? null;
     const list = el('ul', 'ro-pick');
     for (const skill of skills) {
-      const isElsewhere = equip.skills.includes(skill.name) && skill.name !== current;
+      const at = equip.skills.indexOf(skill.name);
+      const isElsewhere = at >= 0 && skill.name !== current;
       const pick = button('ro-pick-item', undefined, () => {
         const chosen = edit().skills;
         if (slot.index < chosen.length) chosen[slot.index] = skill.name;
         else chosen.push(skill.name);
+        selectedSlot = skillSlot(chosen.indexOf(skill.name)).id; // skills fill the first free slot
         renderEquipment();
       });
+      pick.dataset.key = `skill:${skill.name}`;
       pick.disabled = isElsewhere;
+      pick.title = skill.description;
       pick.setAttribute('aria-pressed', String(skill.name === current));
       const text = el('span');
-      text.append(el('strong', null, skill.name), el('small', null, isElsewhere ? 'já está em outro espaço' : skill.description));
+      text.append(el('strong', null, skill.name), el('small', null, isElsewhere ? `já está em: ${skillSlot(at).name.toLowerCase()}` : skill.description));
       pick.append(icon('skill'), text);
-      const item = el('li');
-      item.append(pick);
-      list.append(item);
+      list.append(searchItem(pick, skill));
     }
-    const parts = [el('p', 'ro-detail-hint', 'As instruções da skill vão com ele em cada ronda e guiam como julga e escreve as missões.'), list];
-    if (current) {
-      parts.push(
-        button('btn btn-ghost', 'Tirar a skill', () => {
-          edit().skills.splice(slot.index, 1);
-          renderEquipment();
-        }),
-      );
+    if (skills.length < SKILL_SEARCH_MIN) return [list];
+    return [skillSearch(list, `skill-search:${slot.id}`), list];
+  }
+
+  function searchItem(node, skill) {
+    const item = el('li');
+    item.dataset.search = fold(`${skill.name} ${skill.description}`);
+    item.append(node);
+    return item;
+  }
+
+  // Filters the list in place, without a redraw, so typing keeps its caret.
+  function skillSearch(list, key) {
+    list.append(el('li', 'ro-bag-empty ro-search-empty', 'Nenhuma skill com essa busca.'));
+    const field = el('input', 'field ro-search');
+    field.type = 'search';
+    field.value = skillQuery;
+    field.placeholder = 'Buscar skill';
+    field.spellcheck = false;
+    field.dataset.key = key;
+    field.setAttribute('aria-label', 'Buscar skill pelo nome ou pela descrição');
+    field.addEventListener('input', () => {
+      skillQuery = field.value;
+      filterSkills(list);
+    });
+    filterSkills(list);
+    return field;
+  }
+
+  function filterSkills(list) {
+    const query = fold(skillQuery.trim());
+    let shown = 0;
+    for (const item of list.querySelectorAll('li[data-search]')) {
+      item.hidden = Boolean(query) && !item.dataset.search.includes(query);
+      if (!item.hidden) shown += 1;
     }
-    return parts;
+    list.querySelector('.ro-search-empty').hidden = shown > 0;
+  }
+
+  // What a skill weighs in each round: everything past SKILL_MAX is cut.
+  function showSkillSize(node, chars) {
+    const tokens = Math.round(Math.min(chars, SKILL_MAX) / 4);
+    const text = `${chars.toLocaleString('pt-BR')} caracteres: ≈ ${tokens.toLocaleString('pt-BR')} tokens em cada ronda`;
+    const isCut = chars > SKILL_MAX;
+    node.className = isCut ? 'ro-detail-warn' : 'ro-detail-hint';
+    node.textContent = isCut ? `${text}. Passa de ${SKILL_MAX.toLocaleString('pt-BR')}: ele lê só o começo.` : `${text}.`;
+    return node;
+  }
+
+  // The skill's instructions in a text box. Typing redraws nothing but the size and the save state.
+  function skillEditor(name) {
+    const text = skillTexts.get(name);
+    if (!text) return [el('p', 'ro-detail-hint', 'Abrindo as instruções…')];
+    const area = el('textarea', 'field ro-skill-text');
+    area.rows = 14;
+    area.spellcheck = false;
+    area.value = text.body;
+    area.dataset.key = `skill-text:${name}`;
+    area.setAttribute('aria-label', `Instruções da skill ${name}`);
+    const size = showSkillSize(el('p'), text.body.trim().length);
+    area.addEventListener('input', () => {
+      text.body = area.value;
+      showSkillSize(size, area.value.trim().length);
+      renderDirty();
+    });
+    const done = button('link-button', 'Fechar o editor', () => {
+      editingSkill = null;
+      renderEquipment();
+    });
+    return [area, size, el('small', 'ro-detail-hint', `Salvar grava em ${text.path}: vale também para o seu Claude Code.`), done];
+  }
+
+  // Opens a skill's instructions under the window, read again from its SKILL.md unless they have
+  // changes still to save (so a file changed elsewhere shows up on the next open).
+  async function editSkill(name) {
+    const at = equipment().skills.indexOf(name);
+    if (at < 0) return;
+    editingSkill = name;
+    if (!dirtySkills().includes(name)) skillTexts.delete(name);
+    goToSlot(skillSlot(at).id);
+    if (!skillTexts.has(name)) {
+      try {
+        const { body, path } = await invoke('read_scout_skill', { name });
+        skillTexts.set(name, { body, saved: body, path });
+      } catch (err) {
+        if (editingSkill === name) editingSkill = null;
+        showToast(String(err), true);
+      }
+      renderEquipment();
+    }
+    if (editingSkill === name) dialog.querySelector(`[data-key="${CSS.escape(`skill-text:${name}`)}"]`)?.focus();
   }
 
   // A jewel holds a routine; its flow (when, where, what, delivery) is edited in the Rotinas tab.
@@ -871,17 +1094,20 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
       const slot = connector?.slot ? SLOTS.find((s) => s.id === connector.slot) : null;
       const status = !item.id ? 'sem leitura segura ainda' : slot ? `${connector.isOn ? 'equipado' : 'desligado'}: ${slot.name.toLowerCase()}` : 'clique para equipar';
       const tile = button('ro-item', undefined, () => {
-        selectRoTab('ro-tab-general');
         if (slot) {
-          selectedSlot = slot.id;
-          renderEquipment();
+          showSlot(slot.id);
           return;
         }
         const chosen = SLOTS.find((s) => s.id === selectedSlot && s.kind === 'connector' && !connectorIn(equip, s.id));
         const free = chosen ?? SLOTS.find((s) => s.kind === 'connector' && !connectorIn(equip, s.id));
-        if (free) placeConnector(item.id, free.id);
-        else showToast('Os quatro espaços de conector estão ocupados: tire um antes', true);
+        if (!free) {
+          showToast('Os quatro espaços de conector estão ocupados: tire um antes', true);
+          return;
+        }
+        placeConnector(item.id, free.id);
+        showSlot(free.id);
       });
+      tile.dataset.key = `bag:${item.id ?? item.name}`;
       tile.disabled = !item.id;
       tile.classList.toggle('is-equipped', Boolean(connector?.isOn));
       tile.title = item.id ? `${item.name}: ${status}` : `${item.name}: o batedor ainda não sabe quais ferramentas dele só leem`;
@@ -898,58 +1124,78 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     for (const skill of skills ?? []) {
       const at = equip.skills.indexOf(skill.name);
       const tile = button('ro-item', undefined, () => equipSkill(skill.name));
+      tile.dataset.key = `bag-skill:${skill.name}`;
       tile.classList.toggle('is-equipped', at >= 0);
       tile.title = skill.description;
-      const slotName = at >= 0 ? SLOTS.find((s) => s.kind === 'skill' && s.index === at).name.toLowerCase() : null;
+      const slotName = at >= 0 ? skillSlot(at).name.toLowerCase() : null;
       const text = el('span');
       text.append(el('strong', null, skill.name), el('small', null, slotName ? `equipada: ${slotName}` : 'clique para equipar'));
       tile.append(icon('skill'), text);
-      const li = el('li');
-      li.append(tile);
-      skillItems.append(li);
+      skillItems.append(searchItem(tile, skill));
     }
-    bagEl.replaceChildren(el('p', 'ro-bag-title', 'Conectores vinculados ao seu Claude'), connectorItems, el('p', 'ro-bag-title', 'Skills (~/.claude/skills)'), skillItems);
+    const skillsTitle = el('p', 'ro-bag-title', 'Skills (~/.claude/skills)');
+    const search = (skills?.length ?? 0) >= SKILL_SEARCH_MIN ? [skillSearch(skillItems, 'bag-skill-search')] : [];
+    bagEl.replaceChildren(el('p', 'ro-bag-title', 'Conectores vinculados ao seu Claude'), connectorItems, skillsTitle, ...search, skillItems);
   }
 
+  // From the bag: into the first free skill slot, or to the slot that already holds it.
   function equipSkill(name) {
-    if (equipment().skills.includes(name)) return;
-    if (equipment().skills.length >= state.skillSlots) {
+    const isEquipped = equipment().skills.includes(name);
+    if (!isEquipped && equipment().skills.length >= state.skillSlots) {
       const next = SKILL_SLOT_LEVELS[state.skillSlots];
       showToast(next ? `Os espaços de skill estão cheios: o próximo abre no nível ${next}` : 'Os três espaços de skill estão cheios', true);
       return;
     }
-    const chosen = edit().skills;
-    chosen.push(name);
-    selectedSlot = SLOTS.find((s) => s.kind === 'skill' && s.index === chosen.length - 1).id;
-    renderEquipment();
+    if (!isEquipped) edit().skills.push(name);
+    showSlot(skillSlot(equipment().skills.indexOf(name)).id);
   }
 
   async function saveEquipment() {
-    if (!draft) {
-      showToast('Nada mudou no equipamento');
+    if (!isDirty()) {
+      draft = null;
       return true;
     }
+    if (isSaving) return false; // a second click while the first one saves
+    isSaving = true;
     try {
-      const saved = await invoke('set_scout_equipment', { equipment: draft });
-      draft = null;
-      apply(saved);
+      const done = [];
+      if (isEquipmentDirty()) {
+        const saved = await invoke('set_scout_equipment', { equipment: draft });
+        draft = null;
+        apply(saved);
+        done.push('Batedor equipado');
+      }
+      const names = dirtySkills();
+      for (const name of names) {
+        const text = skillTexts.get(name);
+        skills = await invoke('save_scout_skill', { name, body: text.body, original: text.saved });
+        text.saved = text.body;
+      }
+      if (names.length) done.push(`${done.length ? 'instruções' : 'Instruções'} de ${names.join(', ')} salvas`);
       renderEquipment();
-      showToast('Batedor equipado');
+      renderAbilities();
+      showToast(done.join(' e '));
       return true;
     } catch (err) {
       showToast(String(err), true);
       return false;
+    } finally {
+      isSaving = false;
     }
   }
 
   // ---------- Routines: each one a flow ----------
 
   function renderFlows() {
+    if (!state) return;
     const equip = equipment();
-    const flows = equip.routines.map((routine, index) => flowCard(routine, index, equip));
-    if (flows.length === 0) flows.push(el('li', 'scout-empty', 'Sem rotinas: ele só sai quando você manda.'));
-    document.getElementById('scout-flows').replaceChildren(...flows);
+    keepFocus(() => {
+      const flows = equip.routines.map((routine, index) => flowCard(routine, index, equip));
+      if (flows.length === 0) flows.push(el('li', 'scout-empty', 'Sem rotinas: ele só sai quando você manda.'));
+      document.getElementById('scout-flows').replaceChildren(...flows);
+    });
     document.getElementById('scout-flow-add').disabled = equip.routines.length >= MAX_ROUTINES;
+    renderDirty();
   }
 
   // The sources a routine reads, by name: its own pick, or every one that is on.
@@ -963,10 +1209,13 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
   function flowCard(routine, index, equip) {
     const slot = SLOTS.find((s) => s.kind === 'routine' && s.index === index);
     const isOpen = openFlows.has(index);
+    const title = el('strong', null, routine.label || 'Rotina sem nome');
+    // Text fields pass isRedraw false: rebuilt while typed in, they would lose the next click.
     const change = (key, value, isRedraw = true) => {
       edit().routines[index][key] = value;
+      if (key === 'label') title.textContent = value || 'Rotina sem nome';
       if (isRedraw) renderFlows();
-      else markDirty();
+      else renderDirty();
     };
     const card = el('li', 'flow');
     card.classList.toggle('is-off', !routine.isOn);
@@ -976,7 +1225,7 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     const names = sourceNames(routine, equip);
     const summary = el('div', 'flow-summary');
     summary.append(
-      el('strong', null, routine.label || 'Rotina sem nome'),
+      title,
       el('small', null, `${text} · ${intervalText(routine.everyMinutes)}, ${routine.fromHour}h às ${routine.toHour}h${routine.isWeekdaysOnly ? ', seg a sex' : ''} · ${names.length ? `lê ${names.join(', ')}` : 'sem fonte ligada'}`),
     );
     const toggle = switchLabel(routine.isOn, el('span', 'sr-only', 'Rotina ligada'), (isOn) => change('isOn', isOn));
@@ -993,6 +1242,8 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     head.append(iconBox, summary, toggle, run, more);
     card.append(head);
     if (isOpen) card.append(flowForm(routine, index, equip, change));
+    // Keys by position, for keepFocus: a redraw puts the same controls in the same order.
+    card.querySelectorAll('button, input, select, textarea').forEach((node, at) => (node.dataset.key = `flow:${index}:${at}`));
     return card;
   }
 
@@ -1004,7 +1255,6 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     name.maxLength = 40;
     name.setAttribute('aria-label', 'Nome da rotina');
     name.addEventListener('input', () => change('label', name.value, false));
-    name.addEventListener('change', renderFlows);
     const prompt = el('textarea', 'field');
     prompt.rows = 3;
     prompt.maxLength = 1000;
@@ -1013,11 +1263,12 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     prompt.setAttribute('aria-label', 'O que esta rotina procura');
     prompt.addEventListener('input', () => change('focus', prompt.value, false));
     const preview = button('link-button', 'Ver o texto completo', async () => {
-      if (draft && !(await saveEquipment())) return;
-      const routineId = state.equipment.routines[index]?.id;
-      const pre = form.querySelector('pre') ?? el('pre', 'flow-prompt');
-      form.append(pre);
-      loadPrompt(pre, routineId);
+      if (isDirty() && !(await saveEquipment())) return;
+      // Saving redrew the routines: the text goes in the form on screen now.
+      const live = document.getElementById('scout-flows').children[index]?.querySelector('.flow-form') ?? form;
+      const pre = live.querySelector('pre') ?? el('pre', 'flow-prompt');
+      live.append(pre);
+      loadPrompt(pre, state.equipment.routines[index]?.id);
     });
     const remove = button('link-button', 'Tirar a rotina', () => {
       edit().routines.splice(index, 1);
@@ -1077,9 +1328,9 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     if (ready.length === 0) {
       line.append(
         button('link-button', 'Equipar uma fonte', () => {
+          const free = SLOTS.find((s) => s.kind === 'connector' && !connectorIn(equip, s.id)?.isOn);
           selectTab('scout-tab-equipment');
-          selectRoTab('ro-tab-general');
-          renderEquipment();
+          showSlot(free.id);
         }),
       );
       return line;
@@ -1102,7 +1353,7 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
   }
 
   async function runRoutine(index) {
-    if (draft && !(await saveEquipment())) return;
+    if (isDirty() && !(await saveEquipment())) return;
     const routine = state.equipment.routines[index];
     if (!routine?.id) return;
     try {
@@ -1124,17 +1375,25 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
 
   // ---------- Abilities: what it can do, and the rules it follows ----------
 
+  // What comes from the equipment has a button to edit it there; the rest is how every round works.
+  // It shows the draft, as the equipment window does.
   function renderAbilities() {
-    const equip = state.equipment;
+    const equip = equipment();
     const abilities = [];
     for (const connector of equip.connectors.filter((c) => c.isOn)) {
       const spec = CONNECTORS.find((c) => c.id === connector.id);
       const slot = SLOTS.find((s) => s.id === connector.slot);
-      abilities.push([connectorIcon(connector.id), `Lê o ${spec?.name ?? connector.id}`, `${connector.targets}${slot ? ` · ${slot.name.toLowerCase()}` : ''}`]);
+      const action = slot ? ['Editar', () => goToSlot(slot.id)] : null;
+      abilities.push([connectorIcon(connector.id), `Lê o ${spec?.name ?? connector.id}`, `${connector.targets}${slot ? ` · ${slot.name.toLowerCase()}` : ''}`, action]);
     }
-    for (const name of equip.skills) {
+    for (const slot of SLOTS.filter((s) => s.kind === 'skill' && s.index < state.skillSlots)) {
+      const name = equip.skills[slot.index];
+      if (!name) {
+        abilities.push([icon(slot.id), `${slot.name}: espaço de skill livre`, 'Uma skill de ~/.claude/skills guia como ele julga e escreve as missões.', ['Equipar', () => goToSlot(slot.id)]]);
+        continue;
+      }
       const skill = skills?.find((s) => s.name === name);
-      abilities.push([icon('skill'), `Skill: ${name}`, skill?.description ?? 'Instruções que ele carrega em toda ronda.']);
+      abilities.push([icon('skill'), `Skill: ${name}`, skill?.description ?? 'Instruções que ele carrega em toda ronda.', ['Editar', () => editSkill(name)]]);
     }
     abilities.push(
       [icon('helm'), 'Triagem', 'Separa o que pode virar código de conversa e aviso, junta relatos repetidos numa missão só e dá a gravidade: crítica, alta, normal ou baixa.'],
@@ -1143,15 +1402,20 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
       [icon('amulet'), 'Memória', 'Lembra as missões que já trouxe, para juntar em vez de repetir, e as que você levou ou descartou, para trazer mais do que vale.'],
     );
     const on = equip.routines.filter((r) => r.isOn);
-    abilities.push([icon('ring'), 'Rotinas', on.length ? on.map((r) => `${r.label}: ${scheduleText(r)}`).join(' · ') : 'Nenhuma ligada: ele só sai quando você manda.']);
+    const toRoutines = () => {
+      selectTab('scout-tab-routines');
+      document.getElementById('scout-tab-routines').focus();
+    };
+    abilities.push([icon('ring'), 'Rotinas', on.length ? on.map((r) => `${r.label}: ${scheduleText(r)}`).join(' · ') : 'Nenhuma ligada: ele só sai quando você manda.', ['Editar', toRoutines]]);
     document.getElementById('scout-abilities').replaceChildren(
-      ...abilities.map(([iconNode, title, text]) => {
+      ...abilities.map(([iconNode, title, text, action]) => {
         const item = el('li', 'ability');
         const iconBox = el('span', 'ro-slot-icon');
         iconBox.append(iconNode);
-        const body = el('span');
+        const body = el('span', 'ability-body');
         body.append(el('strong', null, title), el('small', null, text));
         item.append(iconBox, body);
+        if (action) item.append(button('btn ability-action', ...action));
         return item;
       }),
     );
@@ -1196,14 +1460,20 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     selectIn(roTabs, id);
   }
 
-  // The window's knight flaps its pennant only while the equipment is in view.
+  // The window's knight flaps its pennant only while the equipment is in view. Equipment and routines
+  // share one draft, so the tab that opens is redrawn with what the other one changed.
   function selectTab(id) {
     selectIn(tabs, id);
     clearInterval(heroTimer);
     heroTimer = null;
-    if (id === 'scout-tab-abilities') loadBag();
+    if (id === 'scout-tab-routines') renderFlows();
+    if (id === 'scout-tab-abilities') {
+      renderAbilities();
+      loadBag();
+    }
     if (id !== 'scout-tab-equipment') return;
     loadBag();
+    renderEquipment();
     heroTimer = setInterval(drawHero, getHero3d() ? HERO_3D_FRAME_MS : HERO_FRAME_MS);
   }
 
@@ -1211,13 +1481,14 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
   // state is read again first: the scout's file may have changed outside the panel.
   async function open({ project = null, tab = project ? 'scout-tab-missions' : 'scout-tab-equipment' } = {}) {
     if (!state) return;
+    await extrasRead;
     try {
       apply(await invoke('get_scout'));
     } catch {
       // the last state shown is still good enough to open on
     }
     filterProject = project;
-    returnFocus = document.activeElement;
+    if (dialog.hidden) returnFocus = document.activeElement;
     dialog.hidden = false;
     backdrop.hidden = false;
     selectTab(tab);
@@ -1225,13 +1496,19 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     document.getElementById(tab).focus();
   }
 
-  function close() {
+  // Closing keeps what was changed, as the settings do; a change that does not save keeps the window
+  // open with the reason, and "Desfazer" drops it. True when it closed.
+  async function close() {
+    if (isDirty() && !(await saveEquipment())) return false;
     dialog.hidden = true;
     backdrop.hidden = true;
     clearInterval(heroTimer);
     heroTimer = null;
-    draft = null; // unsaved equipment is dropped, as with Cancelar
+    draft = null;
+    skillTexts.clear();
+    editingSkill = null;
     returnFocus?.focus?.();
+    return true;
   }
 
   async function send() {
@@ -1262,6 +1539,7 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     if (fullPrompt.open) loadPrompt(document.getElementById('scout-prompt-text'));
   });
   document.getElementById('scout-equip-save').addEventListener('click', saveEquipment);
+  for (const node of dialog.querySelectorAll('.scout-discard')) node.addEventListener('click', discard);
   filterEl.querySelector('button').addEventListener('click', () => {
     filterProject = null;
     renderMissions();

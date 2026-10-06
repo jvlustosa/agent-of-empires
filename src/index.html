@@ -20,6 +20,7 @@
         <canvas class="minimap" id="minimap" hidden aria-label="Minimapa: clique para ir a esse ponto do mapa"></canvas>
         <div class="selection-bar" id="selection-bar" role="status" hidden>
           <span id="selection-text"></span>
+          <button class="link-button" id="selection-tasks" type="button" aria-haspopup="dialog" hidden>Tarefas <kbd>T</kbd></button>
           <button class="link-button" id="selection-all" type="button">Todos <kbd>Ctrl+A</kbd></button>
           <button class="link-button" id="selection-clear" type="button">Limpar <kbd>Esc</kbd></button>
         </div>
@@ -47,6 +48,7 @@
         <div class="view-controls" role="group" aria-label="Controles do mapa">
           <button class="icon-button view-toggle" id="view-toggle" type="button" aria-label="Vista do mapa" title="Vista do mapa (tecla V): de cima, isométrica ou 3D estilo Age of Empires III"><span id="view-label">2D</span></button>
           <button class="icon-button" id="map-only" type="button" aria-pressed="false" aria-label="Só o mapa" title="Só o mapa: esconde o comando e o painel (tecla F)">⛶</button>
+          <button class="icon-button" id="simple-map" type="button" aria-pressed="false" aria-label="Mapa simplificado" title="Mapa simplificado: só bases, estradas e aldeões, sem árvores, vilas, sombras nem noite. Usa cerca de metade do processador"><svg viewBox="0 0 9 9" width="14" height="14" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="0" y="0" width="9" height="1"/><rect x="0" y="8" width="9" height="1"/><rect x="0" y="1" width="1" height="7"/><rect x="8" y="1" width="1" height="7"/><rect x="1" y="5" width="7" height="1"/><rect x="5" y="2" width="2" height="2"/></svg></button>
           <button class="icon-button" id="view-rotate" type="button" aria-label="Girar a câmera" title="Girar a câmera (Q / E)" hidden>⟳</button>
           <button class="icon-button" id="overview-open" type="button" aria-label="Visão do império" title="Visão do império: todas as bases, recursos e a névoa (tecla I)"><svg viewBox="0 0 9 9" width="14" height="14" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="0" y="1" width="1" height="2"/><rect x="2" y="1" width="1" height="2"/><rect x="6" y="1" width="1" height="2"/><rect x="8" y="1" width="1" height="2"/><rect x="0" y="3" width="3" height="6"/><rect x="6" y="3" width="3" height="6"/><rect x="3" y="0" width="1" height="2"/><rect x="5" y="0" width="1" height="2"/><rect x="3" y="2" width="3" height="7"/></svg></button>
           <button class="idle-button" id="idle-villager" type="button" aria-label="Ir para o próximo aldeão ocioso" title="Aldeão ocioso: vai para o próximo agente esperando você (tecla .)" disabled><svg viewBox="0 0 9 9" width="14" height="14" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><rect x="2" y="0" width="5" height="1"/><rect x="1" y="1" width="7" height="1"/><rect x="3" y="2" width="3" height="2"/><rect x="2" y="4" width="5" height="3"/><rect x="2" y="7" width="2" height="2"/><rect x="5" y="7" width="2" height="2"/></svg><span id="idle-count">0</span></button>
@@ -111,6 +113,14 @@
               <span><strong>3D isométrico (padrão)</strong><small>Mundo em 3D na diagonal, estilo Ragnarok e Age of Empires: relevo, sol e sombras, prédios e aldeões em 3D.</small></span>
             </label>
           </fieldset>
+          <label class="toggle">
+            <input type="checkbox" id="simple-toggle" role="switch" />
+            <span class="toggle-track" aria-hidden="true"></span>
+            <span class="toggle-text">
+              Mapa simplificado
+              <small>Só bases, estradas e aldeões, sem árvores, vilas, sombras nem noite. Usa cerca de metade do processador.</small>
+            </span>
+          </label>
           <fieldset class="deploy-modes view-setting">
             <legend class="toggle-text">Borda do mapa</legend>
             <label class="deploy-mode">
@@ -280,6 +290,17 @@
         <button class="btn btn-primary" id="order-submit" type="button">Mandar <kbd>Ctrl+Enter</kbd></button>
       </footer>
     </section>
+    <div class="settings-backdrop" id="tasks-backdrop" hidden></div>
+    <section class="modal tasks" id="tasks" role="dialog" aria-modal="true" aria-labelledby="tasks-title" hidden>
+      <header class="settings-head">
+        <h2 id="tasks-title">Tarefas dos selecionados</h2>
+        <button class="icon-button" id="tasks-close" type="button" aria-label="Fechar">✕</button>
+      </header>
+      <div class="modal-body">
+        <div class="tasks-list" id="tasks-list"></div>
+        <p class="modal-note">Enter manda o comando só para aquele agente e passa para o próximo; Shift+Enter quebra a linha.</p>
+      </div>
+    </section>
     <div class="settings-backdrop" id="reply-backdrop" hidden></div>
     <section class="modal" id="reply" role="dialog" aria-modal="true" aria-labelledby="reply-title" hidden>
       <header class="settings-head">
@@ -417,7 +438,8 @@
           <div class="ro-detail" id="ro-detail" aria-live="polite"></div>
           <div class="scout-equip-actions">
             <p class="modal-note" id="ro-dirty"></p>
-            <button class="btn btn-primary" id="scout-equip-save" type="button">Salvar equipamento</button>
+            <button class="btn btn-ghost scout-discard" type="button" hidden>Desfazer</button>
+            <button class="btn btn-primary" id="scout-equip-save" type="button" disabled>Salvar equipamento</button>
           </div>
         </div>
         <div class="scout-panel" id="scout-routines-panel" role="tabpanel" aria-labelledby="scout-tab-routines" hidden>
@@ -425,7 +447,8 @@
           <ol class="flows" id="scout-flows"></ol>
           <div class="scout-equip-actions">
             <button class="btn btn-ghost" id="scout-flow-add" type="button">+ Nova rotina</button>
-            <button class="btn btn-primary" id="scout-flows-save" type="button">Salvar rotinas</button>
+            <button class="btn btn-ghost scout-discard" type="button" hidden>Desfazer</button>
+            <button class="btn btn-primary" id="scout-flows-save" type="button" disabled>Salvar rotinas</button>
           </div>
         </div>
         <div class="scout-panel" id="scout-abilities-panel" role="tabpanel" aria-labelledby="scout-tab-abilities" hidden>
@@ -467,18 +490,31 @@
               <legend class="field-label">Rede</legend>
             </fieldset>
             <ol class="phone-steps">
-              <li>Celular na mesma rede Wi-Fi deste computador, ou no Tailscale.</li>
+              <li id="phone-step-network">Celular na mesma rede Wi-Fi deste computador, ou no Tailscale.</li>
               <li>Aponte a câmera para o QR code.</li>
               <li>A página abre já conectada. Dá para pôr na tela inicial.</li>
             </ol>
             <p class="phone-seen" id="phone-seen" aria-live="polite"></p>
+            <div class="phone-lifetime">
+              <label for="phone-lifetime">O código vale por</label>
+              <select class="field" id="phone-lifetime">
+                <option value="0">sem prazo</option>
+                <option value="1">1 dia</option>
+                <option value="7">7 dias</option>
+                <option value="30">30 dias</option>
+              </select>
+              <span id="phone-expiry"></span>
+            </div>
             <div class="phone-link-actions">
               <button class="link-button" id="phone-copy" type="button">Copiar link</button>
-              <button class="link-button" id="phone-reset" type="button" title="O celular conectado para de funcionar até escanear o QR novo">Trocar o código</button>
+              <button class="link-button" id="phone-reset" type="button" title="Todo celular pareado perde o acesso na hora e o QR passa a ter um código novo">Invalidar código</button>
             </div>
           </div>
         </div>
-        <p class="modal-note">Só aparelhos da sua rede ou do Tailscale, e só com o código deste QR. Quem tiver o link comanda os agentes: não compartilhe. Na rede local a conexão não é criptografada; em Wi-Fi público, use só pelo Tailscale.</p>
+        <label class="field-label" for="phone-public-url">Endereço na internet <small>(opcional)</small></label>
+        <input class="field" id="phone-public-url" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Ex.: agentes.seudominio.com.br" />
+        <p class="modal-note">Um túnel (Cloudflare Tunnel, por exemplo) que leva até a porta deste computador. Com ele, o QR abre de qualquer lugar. Proteja com login no túnel (Cloudflare Access): sem isso, só o código separa a internet dos seus agentes.</p>
+        <p class="modal-note">Só aparelhos da sua rede, do Tailscale ou do endereço na internet, e só com o código deste QR. Quem tiver o link comanda os agentes: não compartilhe. Na rede local a conexão não é criptografada; em Wi-Fi público, use o Tailscale ou o endereço na internet.</p>
         <p class="modal-note" id="phone-port-note" hidden></p>
       </div>
     </section>

@@ -17,10 +17,16 @@ function matches(name, query) {
   return fold(query).split(/\s+/).filter(Boolean).every((word) => fold(name).includes(word));
 }
 
+// A search that starts like a path ("~/dotfiles", "/srv/app") names a repository outside ~/Code.
+function isPath(query) {
+  return /^(~|\/)/.test(query.trim());
+}
+
 /**
- * getRepos(): Promise<[{ name, path, detail, isOnMap }]>; onBuild(repo): start placing its base.
+ * getRepos(): Promise<[{ name, path, detail, isOnMap }]>; addRepo(path): Promise<repo | null> adds one
+ * from outside ~/Code; onBuild(repo): start placing its base.
  */
-export function createBuildMenu({ getRepos, onBuild }) {
+export function createBuildMenu({ getRepos, addRepo, onBuild }) {
   const menu = document.getElementById('build-menu');
   const opener = document.getElementById('build-open');
   const search = document.getElementById('build-search');
@@ -30,7 +36,10 @@ export function createBuildMenu({ getRepos, onBuild }) {
   let active = 0;
 
   function render() {
-    shown = repos.filter((repo) => matches(repo.name, search.value)).slice(0, 60);
+    const query = search.value.trim();
+    shown = isPath(query)
+      ? [{ name: `Adicionar ${query}`, path: query, detail: 'repositório fora de ~/Code', isNew: true }]
+      : repos.filter((repo) => matches(repo.name, search.value)).slice(0, 60);
     active = Math.min(active, Math.max(0, shown.length - 1));
     list.replaceChildren(
       ...shown.map((repo, i) => {
@@ -45,7 +54,7 @@ export function createBuildMenu({ getRepos, onBuild }) {
         return item;
       }),
     );
-    if (shown.length === 0) list.append(el('li', 'build-empty', 'Nenhum repositório com esse nome em ~/Code'));
+    if (shown.length === 0) list.append(el('li', 'build-empty', 'Nenhum repositório com esse nome em ~/Code. De fora? Escreva o caminho (~/pasta)'));
   }
 
   async function open() {
@@ -64,9 +73,11 @@ export function createBuildMenu({ getRepos, onBuild }) {
     opener.setAttribute('aria-expanded', 'false');
   }
 
-  function pick(repo) {
+  async function pick(repo) {
+    const picked = repo.isNew ? await addRepo(repo.path) : repo;
+    if (!picked) return; // addRepo said why
     close();
-    onBuild(repo);
+    onBuild(picked);
   }
 
   opener.addEventListener('click', () => (menu.hidden ? open() : close()));

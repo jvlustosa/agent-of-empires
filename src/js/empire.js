@@ -151,6 +151,9 @@ const WALK_SPEED = 48; // world px / s
 const SCOUT_SPEED = 72;
 const MAX_FRAME_DT = 0.1;
 const FRAME_MS = 1000 / 30;
+const SIMPLE_FRAME_MS = 1000 / 15;
+// The simplified map always shows midday: no night darkness, no lamps to light.
+const SIMPLE_HOUR = 12;
 // Tool calls flip the activity every few seconds; a villager finishes a stint before crossing the
 // yard to the next work site, so the base bustles without units ping-ponging.
 const NODE_DWELL_MS = 2500;
@@ -647,6 +650,8 @@ export class Empire {
     this.viewRotation = Number.isInteger(callbacks.view?.rotation) ? callbacks.view.rotation : 0;
     this.proj = makeProjection('top', 0, WORLD_W, 0);
     this.props = [];
+    // Simplified map: no fine detail, at a lower frame rate (see setSimple).
+    this.isSimple = Boolean(callbacks.isSimple);
     // The map's edge: a stone wall unless the user chose the forest. Maps saved while the forest was
     // the default (hasBorderWall: false) get the wall too.
     this.hasBorderWall = layout?.mapEdge !== 'forest';
@@ -655,6 +660,7 @@ export class Empire {
     this.isPanKeyDown = false; // Space held: left drag pans instead of selecting
     this.pinned = new Map(); // project -> { x, y }: top-left of its base
     this.repoPaths = new Map(Object.entries(layout?.paths ?? {})); // project -> absolute folder
+    this.repoCheckouts = new Map(); // project -> { branch, worktreeOf }: its folder at the last count
     this.orders = new Map(Object.entries(layout?.orders ?? {})); // session id -> { project, at }
     this.selected = new Set(); // villagers picked on the map (click, Shift+click, drag a box)
     this.recruitCount = 0; // recruits summoned so far: their ids
@@ -680,6 +686,7 @@ export class Empire {
     this.bases = new Map(); // project -> { project, pos, size, coreX, team, foundedAt, spots }
     this.reservations = new Map(); // project -> { pos, hint, until }: a base about to be founded
     this.training = new Map(); // project -> { hint, since, until }: a villager on its way to a base
+    this.editors = new Map(); // project -> editor name ("Cursor"): a window open on its folder
     this.spend = new Map(); // project -> { tokens, percent, sessionPercent, severity }: its part of the plan's session
     this.chars = new Map();
     this.bots = new Map();
@@ -846,6 +853,10 @@ export class Empire {
    */
   async setView(mode, rotation = this.viewRotation) {
     const next = ['iso', '3d'].includes(mode) ? mode : 'top';
+    if (next === '3d' && this.world3d?.isContextLost) {
+      this.canvas.dispatchEvent(new CustomEvent('viewerror', { detail: 'a placa de vídeo ainda não devolveu o 3D' }));
+      return;
+    }
     if (next === '3d' && !this.world3d) {
       try {
         const { World3D } = await import('./world3d.js');
@@ -867,6 +878,21 @@ export class Empire {
       this.canvas.dispatchEvent(new CustomEvent('viewzoom', { detail: this.viewZoom }));
     }
     this.canvas.dispatchEvent(new CustomEvent('viewchange', { detail: { mode: this.viewMode, rotation: this.viewRotation } }));
+  }
+
+  /** Simplified map, in 2D and 3D: no woods, grown village, shadows or night, at half the frame rate. */
+  setSimple(isOn) {
+    if (this.isSimple === isOn) return;
+    this.isSimple = isOn;
+    this.buildStaticLayer(); // also has the 3D scenery rebuilt
+    this.world3d?.setSimple(isOn);
+  }
+
+  /** The 3D view lost its GPU context: the map goes on from above, and the toast says why. */
+  onContextLost() {
+    if (!this.is3d) return;
+    this.setView('top');
+    this.canvas.dispatchEvent(new CustomEvent('viewerror', { detail: 'a placa de vídeo travou, o mapa segue em 2D' }));
   }
 
   /** Q / E: the isometric camera turns a quarter, keeping the middle of the stage in the middle. */
@@ -985,7 +1011,7 @@ export class Empire {
     this.buildNav();
     S.drawGrass(ctx, 0, 0, width, height);
     this.drawRoads(ctx);
-    this.drawWildLand(ctx);
+    if (!this.isSimple) this.drawWildLand(ctx);
     this.drawFogGround(ctx);
     this.drawSquareScenery(ctx);
     this.borderWall = null;
@@ -1459,18 +1485,56 @@ export class Empire {
   // ---------- Where each agent works ----------
 
   /**
-   * Repositories in ~/Code: their folders tell where an edited file lives, and their size the era
-   * a town center suggests.
+   * Repositories in ~/Code: their folders tell where an edited file lives, their size the era a
+   * town center suggests, and their checkout what its nameplate says.
    */
   setRepoPaths(projects) {
-    for (const { name, path, trackedFiles } of projects) {
+    for (const { name, path, trackedFiles, branch, worktreeOf } of projects) {
       if (name && path && !this.repoPaths.has(name)) this.repoPaths.set(name, path);
       if (name && Number.isFinite(trackedFiles)) this.repoSizes.set(name, trackedFiles);
+      if (name) this.repoCheckouts.set(name, { branch: branch ?? null, worktreeOf: worktreeOf ?? null });
     }
   }
 
   repoPathOf(project) {
     return this.repoPaths.get(project) ?? null;
+  }
+
+  /** The bases with an editor window open on their folder: project -> editor name. */
+  setEditors(editors) {
+    this.editors = editors;
+  }
+
+  editorOf(project) {
+    return this.editors.get(project) ?? null;
+  }
+
+  // A base is active while an editor window is open on its folder or one of its villagers works
+  // (asking you counts: the turn is not over). The others lie in shade, their banner lowered.
+  isBaseActive(project) {
+    if (this.editors.has(project) || this.training.has(project)) return true;
+    for (const ch of this.chars.values()) {
+      if (ch.project === project && !ch.isObserver && ch.goal?.type !== 'exit' && ch.agent.status === 'busy') return true;
+    }
+    return false;
+  }
+
+  /**
+   * A base's checkout: its folder's branch and whose worktree it is, from the last count. A folder
+   * the count does not list goes by the branch its own sessions' transcripts name.
+   */
+  checkoutOf(project) {
+    const counted = this.repoCheckouts.get(project);
+    if (counted) return counted;
+    const branch = [...this.chars.values()].find((ch) => ch.agent?.project === project && ch.agent.branch)?.agent.branch ?? null;
+    return { branch, worktreeOf: null };
+  }
+
+  // Under a base's name: a branch off the trunk and whose worktree the folder is. On the trunk, nothing.
+  checkoutLine(project) {
+    const checkout = this.checkoutOf(project);
+    const worktree = checkout.worktreeOf && `worktree de ${this.displayName(checkout.worktreeOf)}`;
+    return [featureBranch(checkout), worktree].filter(Boolean).join(' · ');
   }
 
   /**
@@ -2976,7 +3040,7 @@ export class Empire {
 
   loop(now) {
     requestAnimationFrame((next) => this.loop(next));
-    if (now - this.lastFrameAt < FRAME_MS) return;
+    if (now - this.lastFrameAt < (this.isSimple ? SIMPLE_FRAME_MS : FRAME_MS)) return;
     const dt = Math.min(MAX_FRAME_DT, (now - this.lastFrameAt) / 1000);
     this.lastFrameAt = now;
     this.applyPanKeys(dt);
@@ -2991,16 +3055,20 @@ export class Empire {
       this.repeatFeeling(ch, now);
     }
     for (const [id, bot] of this.bots) if (bot.goneAt !== null && now - bot.goneAt > BOT_EXIT_MS) this.bots.delete(id);
-    if (this.is3d) this.world3d.render(now, S.skyFor(mapClock().hour));
+    if (this.is3d) this.world3d.render(now, this.skyNow());
     else this.render(now);
     this.updateLabels(now);
     this.drawMinimap(now);
   }
 
+  skyNow() {
+    return S.skyFor(this.isSimple ? SIMPLE_HOUR : mapClock().hour);
+  }
+
   render(now) {
     const ctx = this.ctx;
     const t = now / 1000;
-    const sky = S.skyFor(mapClock().hour);
+    const sky = this.skyNow();
 
     const { a, b, c, d, e, f, width, height } = this.proj;
     // The ground and what lies flat on it (territories, foundations, mist) go through the
@@ -3144,20 +3212,23 @@ export class Empire {
       const tcY = oy + tc.y;
       const tcFoot = [ox + lay.door.x, tcY + tc.h];
 
+      const isActive = this.isBaseActive(base.project);
+
       S.drawBaseGround(ctx, ox, oy, lay.w, lay.h, lay.ground);
-      this.collectPlan(drawables, lights, base, design, sky.isNight, t);
-      S.drawTerritory(ctx, land.x, land.y, land.w, land.h, base.team[0], isAlarm ? kindInfo('asking').color : null, t);
+      if (!this.isSimple) this.collectPlan(drawables, lights, base, design, sky.isNight, t); // the grown village
+      if (!isActive) S.drawPlotShade(ctx, land.x, land.y, land.w, land.h);
+      S.drawTerritory(ctx, land.x, land.y, land.w, land.h, isActive ? base.team[0] : S.QUIET_BORDER, isAlarm ? kindInfo('asking').color : null, t);
       if (isLinked) S.drawPlotGlow(ctx, land.x, land.y, land.w, land.h, LINK_COLOR, t);
       const [drawMine, drawForge] = lay.isSmall ? [S.drawSmallMine, S.drawSmallForge] : [S.drawMine, S.drawForge];
       drawables.push({ x: ox + mine.foot[0], y: oy + mine.foot[1], draw: () => drawMine(ctx, ox + mine.x, oy + mine.y, t, atWork.has('mine')) });
       drawables.push({ x: ox + forge.foot[0], y: oy + forge.foot[1], draw: () => drawForge(ctx, ox + forge.x, oy + forge.y, t, atWork.has('forge')) });
-      if (banner) drawables.push({ x: ox + banner.x, y: oy + banner.y, draw: () => S.drawBanner(ctx, ox + banner.x, oy + banner.y, base.team, t) });
+      if (banner && !this.isSimple) drawables.push({ x: ox + banner.x, y: oy + banner.y, draw: () => S.drawBanner(ctx, ox + banner.x, oy + banner.y, base.team, t, !isActive) });
       for (const block of lay.fenceBlocks) {
         const [x, y] = [ox + block.x, oy + block.y];
         drawables.push({ x, y, draw: () => S.drawFenceBlock(ctx, x, y, block) });
       }
       if (bench) drawables.push({ x: ox + bench.x + bench.w / 2, y: oy + bench.y, draw: () => S.drawBench(ctx, ox + bench.x, oy + bench.y, bench.w) });
-      const wonders = this.wondersOf(base.project);
+      const wonders = this.isSimple ? [] : this.wondersOf(base.project);
       const [obelisk, beacon] = [[ox + lay.obelisk[0], oy + lay.obelisk[1]], [ox + lay.beacon[0], oy + lay.beacon[1]]];
       if (wonders.includes('obelisk')) drawables.push({ x: obelisk[0], y: obelisk[1], draw: () => S.drawObelisk(ctx, ...obelisk) });
       if (wonders.includes('beacon')) drawables.push({ x: beacon[0], y: beacon[1], draw: () => S.drawBeacon(ctx, ...beacon, t) });
@@ -3394,13 +3465,16 @@ export class Empire {
       const crew = [...this.chars.values()].filter((ch) => ch.project === base.project && !ch.isObserver && ch.goal?.type !== 'exit');
       const agents = crew.map((ch) => ch.agent);
       const training = this.training.get(base.project);
-      const detail = training ? `Novo aldeão · ${training.hint}` : baseSummary(agents) || 'Nenhum aldeão agora';
-      const kind = agents.some(isBlocked) ? 'asking' : agents.some((a) => a.status !== 'busy') ? 'yourturn' : agents.length ? 'busy' : 'empty';
+      const editor = this.editorOf(base.project);
+      const detail = training ? `Novo aldeão · ${training.hint}` : baseSummary(agents) || (editor ? `${editor} aberto` : 'Fechado · sem sessão');
+      // 'open' has only its editor window open; 'empty' is a closed base (no session, no editor), so its plate goes dark.
+      const kind = agents.some(isBlocked) ? 'asking' : agents.some((a) => a.status !== 'busy') ? 'yourturn' : agents.length || training ? 'busy' : editor ? 'open' : 'empty';
       const key = `base:${base.project}`;
       active.add(key);
       const land = this.plotRect(base);
       const isAbove = this.layoutOf(base).isSmall; // a half-lot's town center fills its top: the plate stands over the land
-      this.placeBaseLabel(key, this.nameplatePoint(land, isAbove ? -NAMEPLATE_INSET : NAMEPLATE_INSET), this.displayName(base.project), detail, kind, base.team[0], land.w, isAbove);
+      this.placeBaseLabel(key, this.nameplatePoint(land, isAbove ? -NAMEPLATE_INSET : NAMEPLATE_INSET), this.displayName(base.project), detail, kind, base.team[0], land.w, isAbove, this.checkoutLine(base.project));
+      this.labels.get(key).classList.toggle('is-active', this.isBaseActive(base.project));
       const spend = this.spend.get(base.project);
       if (spend?.tokens > 0) {
         active.add(`spend:${base.project}`);
@@ -3479,22 +3553,27 @@ export class Empire {
     return top;
   }
 
-  placeBaseLabel(key, at, title, detail, kind, color, width = PLOT_W, isAbove = false) {
+  placeBaseLabel(key, at, title, detail, kind, color, width = PLOT_W, isAbove = false, checkout = '') {
     let label = this.labels.get(key);
     if (!label) {
       label = document.createElement('div');
       label.className = 'base-label';
-      label.append(document.createElement('strong'), document.createElement('span'));
+      const branch = document.createElement('em');
+      branch.className = 'branch-tag';
+      label.append(document.createElement('strong'), branch, document.createElement('span'));
       this.overlay.append(label);
       this.labels.set(key, label);
     }
     label.classList.toggle('is-above', isAbove);
-    const content = `${title}|${detail}|${kind}|${color}`;
+    const content = `${title}|${detail}|${kind}|${color}|${checkout}`;
     if (label.dataset.content !== content) {
       label.dataset.content = content;
       label.dataset.kind = kind;
       label.style.setProperty('--team', color);
       label.querySelector('strong').textContent = breakable(title);
+      const tag = label.querySelector('.branch-tag');
+      tag.textContent = checkout;
+      tag.hidden = !checkout;
       label.querySelector('span').textContent = detail;
     }
     const pos = `${Math.round(at.x * this.scale)}|${Math.round(at.y * this.scale)}|${this.scale}`;

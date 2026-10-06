@@ -183,7 +183,7 @@ mod tests {
         fs::write(transcripts.join("cccc-3.jsonl"), format!("{{\"type\":\"user\",\"cwd\":\"{cwd}\"}}\n")).unwrap();
         fs::write(transcripts.join("dddd-4.jsonl"), "{\"type\":\"user\",\"cwd\":\"/somewhere/else\"}\n{\"type\":\"last-prompt\",\"lastPrompt\":\"x\"}\n").unwrap();
 
-        let repo = Project { name: "repo".into(), path: repo_path.to_string_lossy().into_owned(), parent: "Code".into(), last_claude_at: None, last_git_at: None, tracked_files: None };
+        let repo = Project { name: "repo".into(), path: repo_path.to_string_lossy().into_owned(), parent: "Code".into(), last_claude_at: None, last_git_at: None, tracked_files: None, branch: None, worktree_of: None };
         let repos = std::slice::from_ref(&repo);
         let sessions = list_sessions(&root, &repo, repos);
         let found = find_session(&root, &repo, repos, "aaaa-1");

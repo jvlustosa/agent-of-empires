@@ -1,5 +1,5 @@
-//! Git repositories under the projects folder (~/Code unless chosen at first run) that a new agent
-//! can be deployed to.
+//! Git repositories under the projects folder (~/Code unless chosen at first run), plus the ones
+//! added by path from outside it, that a new agent can be deployed to.
 
 use crate::collector::project_slug;
 use crate::empire::git;
@@ -56,6 +56,10 @@ pub struct Project {
     pub last_git_at: Option<i64>,
     /// Files git tracks: the map suggests how big the repository's town center is from it.
     pub tracked_files: Option<u32>,
+    /// Branch checked out in the folder (the commit, short, when detached).
+    pub branch: Option<String>,
+    /// The repository this folder is a linked worktree of, by its folder name.
+    pub worktree_of: Option<String>,
 }
 
 impl Project {
@@ -117,6 +121,22 @@ fn git_dir(repo: &Path) -> Option<PathBuf> {
     Some(if target.is_absolute() { target } else { repo.join(target) })
 }
 
+// A linked worktree's pointer names `<main>/.git/worktrees/<name>` (`<main>.git/...` for a bare
+// repository); a submodule's names `.git/modules/...` instead.
+fn worktree_of(repo: &Path) -> Option<String> {
+    if repo.join(".git").is_dir() {
+        return None;
+    }
+    let worktrees = git_dir(repo)?.parent()?.to_path_buf();
+    if worktrees.file_name()? != "worktrees" {
+        return None;
+    }
+    let common = worktrees.parent()?;
+    let main = if common.file_name()? == ".git" { common.parent()? } else { common };
+    let name = main.file_name()?.to_string_lossy();
+    Some(name.strip_suffix(".git").unwrap_or(&name).to_string())
+}
+
 fn last_git_ms(repo: &Path) -> Option<i64> {
     fs::metadata(git_dir(repo)?.join("logs").join("HEAD")).ok().map(|meta| mtime_ms(&meta))
 }
@@ -137,6 +157,11 @@ pub fn list_projects() -> Vec<Project> {
     let Some(root) = projects_root() else { return Vec::new() };
     let mut repos = Vec::new();
     collect_repos(&root, 1, &mut repos);
+    for extra in crate::onboarding::Config::load().extra_repos.into_iter().map(PathBuf::from) {
+        if extra.join(".git").exists() && !repos.contains(&extra) {
+            repos.push(extra);
+        }
+    }
     let claude_dir = claude_projects_dir();
 
     let mut projects: Vec<Project> = repos
@@ -149,6 +174,8 @@ pub fn list_projects() -> Vec<Project> {
                 parent: path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
                 last_git_at: last_git_ms(&path),
                 tracked_files: tracked_files(&path),
+                branch: branch(&path),
+                worktree_of: worktree_of(&path),
                 path: path_text,
                 last_claude_at,
             }
@@ -337,7 +364,7 @@ mod tests {
     }
 
     fn project(name: &str, last_claude_at: Option<i64>, last_git_at: Option<i64>) -> Project {
-        Project { name: name.into(), path: String::new(), parent: String::new(), last_claude_at, last_git_at, tracked_files: None }
+        Project { name: name.into(), path: String::new(), parent: String::new(), last_claude_at, last_git_at, tracked_files: None, branch: None, worktree_of: None }
     }
 
     #[test]
@@ -366,6 +393,25 @@ mod tests {
 
         assert!(last_git_ms(&root.join("wt")).is_some());
         assert_eq!(last_git_ms(&root.join("fresh")), None);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn worktree_names_its_main_repository_but_not_a_submodule() {
+        let root = std::env::temp_dir().join(format!("cpo-worktree-{}", std::process::id()));
+        fs::create_dir_all(root.join("site/.git/worktrees/slides")).unwrap();
+        fs::create_dir_all(root.join("slides")).unwrap();
+        fs::write(root.join("slides/.git"), format!("gitdir: {}\n", root.join("site/.git/worktrees/slides").display())).unwrap();
+        fs::create_dir_all(root.join("lib.git/worktrees/wt")).unwrap();
+        fs::create_dir_all(root.join("wt")).unwrap();
+        fs::write(root.join("wt/.git"), "gitdir: ../lib.git/worktrees/wt\n").unwrap();
+        fs::create_dir_all(root.join("site/vendor/dep")).unwrap();
+        fs::write(root.join("site/vendor/dep/.git"), "gitdir: ../../.git/modules/vendor/dep\n").unwrap();
+
+        assert_eq!(worktree_of(&root.join("slides")).as_deref(), Some("site"));
+        assert_eq!(worktree_of(&root.join("wt")).as_deref(), Some("lib"));
+        assert_eq!(worktree_of(&root.join("site/vendor/dep")), None);
+        assert_eq!(worktree_of(&root.join("site")), None);
         fs::remove_dir_all(root).unwrap();
     }
 

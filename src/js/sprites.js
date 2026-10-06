@@ -63,7 +63,11 @@ export const TEAM_COLORS = [
   ['#e07ab0', '#bb5a8e'],
   ['#45c1bd', '#339592'],
   ['#f08a3c', '#c96c28'],
+  ['#2f2f36', '#1c1c21'],
 ];
+// Black is a pick in the design dialog only: the color a repository's name hashes to keeps drawing
+// from the first eight, so adding it repaints no base that uses the automatic one.
+const HASHED_TEAM_COLORS = TEAM_COLORS.slice(0, 8);
 const SKINS = [
   ['#f1c9a5', '#d9a983'],
   ['#d9a47a', '#bd8960'],
@@ -181,18 +185,18 @@ function pick(list, n) {
 }
 
 export function teamColor(project) {
-  return pick(TEAM_COLORS, hashString(project))[0];
+  return pick(HASHED_TEAM_COLORS, hashString(project))[0];
 }
 
 export function teamShade(project) {
-  return pick(TEAM_COLORS, hashString(project))[1];
+  return pick(HASHED_TEAM_COLORS, hashString(project))[1];
 }
 
 // Villagers wear the repository's color (teams read at a glance); face, hair and hat vary per
 // session. kind 'scout' is the observer that rides between the bases.
 export function makeLook(id, project, kind = 'villager') {
   const h = hashString(id);
-  const [tunic, tunicShade] = pick(TEAM_COLORS, hashString(project));
+  const [tunic, tunicShade] = pick(HASHED_TEAM_COLORS, hashString(project));
   const [skin, skinShade] = pick(SKINS, h >>> 3);
   return {
     tunic,
@@ -1597,11 +1601,18 @@ function drawTownTower(ctx, tx, gy, shape, art, style, team, isNight, t) {
 }
 
 /** Team banner on a pole; (x, y) is the pole's foot. */
-export function drawBanner(ctx, x, y, team, t) {
+export function drawBanner(ctx, x, y, team, t, isLowered = false) {
   const [color, shade] = team;
   rect(ctx, x - 1, y - 1, 3, 2, C.shadow);
   rect(ctx, x, y - 28, 1, 28, C.woodDark);
   rect(ctx, x, y - 29, 1, 1, C.gold);
+  if (isLowered) {
+    // a quiet base: the flag hangs limp at the foot of the pole
+    rect(ctx, x + 1, y - 13, 3, 8, color);
+    rect(ctx, x + 1, y - 5, 2, 1, color);
+    rect(ctx, x + 3, y - 13, 1, 7, shade);
+    return;
+  }
   const flap = Math.floor(t * 3) % 2;
   rect(ctx, x + 1, y - 27, 7, 5, color);
   rect(ctx, x + 1, y - 22, 7, 1, shade);
@@ -1695,6 +1706,18 @@ export function drawPlotGlow(ctx, x, y, w, h, color, t) {
   ctx.save();
   ctx.globalAlpha = 0.07 + 0.08 * (Math.sin(t * 6) + 1) / 2;
   rect(ctx, x, y, w, h, color);
+  ctx.restore();
+}
+
+// A quiet base (no editor window open, nobody working): its land in shade, its border in stone,
+// so the active ones stand out at a glance.
+export const QUIET_BORDER = C.stoneDark;
+export const PLOT_SHADE = { color: '#1a1208', alpha: 0.3 };
+
+export function drawPlotShade(ctx, x, y, w, h) {
+  ctx.save();
+  ctx.globalAlpha = PLOT_SHADE.alpha;
+  rect(ctx, x, y, w, h, PLOT_SHADE.color);
   ctx.restore();
 }
 
@@ -2163,8 +2186,33 @@ export function drawGlow(ctx, x, y, radius, color, strength) {
 
 // ---------- O Batedor: the village's hero, a knight on a barded horse ----------
 
-// Slack's four colors and its aubergine: the shield's mark, the pennant and the horse's cloth.
+// Slack's four colors and its aubergine: the shield's mark and the horse's cloth.
 export const SLACK = { blue: '#36c5f0', green: '#2eb67d', yellow: '#ecb22e', red: '#e01e5a', aubergine: '#4a154b', aubergineLight: '#6b2a6d' };
+// The pennant is ChatJurídico's logo: the blue speech bubble, its tail at the bottom-left, with the
+// white mark (a Λ over a bowl). 7 x 8; '#' blue, 'w' white.
+const CJ_BLUE = '#3a5d9d';
+const CJ_FLAG = [
+  '.#####.',
+  '###w###',
+  '##w#w##',
+  '#w###w#',
+  '#wwwww#',
+  '##www##',
+  '######.',
+  '#......',
+];
+// The mark at twice the detail, for the panel's portrait and the 3D pennant: thin legs, a shallow bowl.
+const CJ_MARK_FINE = [
+  '....ww....',
+  '...w..w...',
+  '...w..w...',
+  '..w....w..',
+  '..w....w..',
+  '.w......w.',
+  'wwwwwwwwww',
+  '..wwwwww..',
+  '....ww....',
+];
 // The hash in a 5 x 5 grid, four arms turning around the middle: [x, y, color].
 const SLACK_MARK = [
   [1, 0, 'blue'], [0, 1, 'blue'], [1, 1, 'blue'], [2, 1, 'blue'],
@@ -2197,8 +2245,28 @@ export function drawSlackShield(ctx, x, y, rim = '#3b2a1a') {
 }
 
 /**
- * The scout on its barded horse, seen from the side, 24 px wide and 29 tall from the hooves at
- * (ax, ay). The lance carries a pennant in Slack's colors; the armor follows its level.
+ * The ChatJurídico pennant, 7 x 8 from its top-left corner (14 x 16 when `isFine`, with the finer
+ * mark). Mirrored, the tail stays by the pole (the mark is symmetric); `flap` drops the far edge.
+ */
+export function drawChatJuridicoFlag(ctx, x, y, { isMirrored = false, flap = 0, isFine = false } = {}) {
+  const left = Math.round(x);
+  const top = Math.round(y);
+  const size = isFine ? 2 : 1;
+  CJ_FLAG.forEach((line, row) => [...line].forEach((cell, col) => {
+    if (cell === '.') return;
+    const drop = col === 6 ? flap : 0;
+    const color = cell === 'w' && !isFine ? '#ffffff' : CJ_BLUE;
+    rect(ctx, left + (isMirrored ? 6 - col : col) * size, top + (row + drop) * size, size, size, color);
+  }));
+  if (!isFine) return;
+  CJ_MARK_FINE.forEach((line, row) => [...line].forEach((cell, col) => {
+    if (cell === 'w') rect(ctx, left + 2 + col, top + 2 + row, 1, 1, '#ffffff');
+  }));
+}
+
+/**
+ * The scout on its barded horse, seen from the side, 24 px wide and 31 tall from the hooves at
+ * (ax, ay). The lance carries the ChatJurídico pennant; the armor follows its level.
  */
 export function drawKnight(ctx, look, ax, ay, facing, isMoving, frame, t, level = 1) {
   const x0 = Math.round(ax) - 12;
@@ -2247,10 +2315,9 @@ export function drawKnight(ctx, look, ax, ay, facing, isMoving, frame, t, level 
   const sway = Math.round(Math.sin(t * 6) * (isMoving ? 1 : 0.6));
   P(10, -28, 2, 3, SLACK.red);
   P(9 - sway, -29, 2, 2, SLACK.red);
-  // lance held high, the pennant flapping off it above the horse's head
-  for (let i = 0; i < 14; i++) P(14 + Math.floor(i / 4), -16 - i, 1, 1, i >= 12 ? '#e5e7eb' : C.wood);
-  const flap = Math.floor(t * 8) % 2;
-  [SLACK.blue, SLACK.green, SLACK.yellow, SLACK.red].forEach((color, i) => P(18, -28 + i, 4 - (i % 2) * flap - (i > 1 ? 1 : 0), 1, color));
+  // lance held high, the pennant flapping off it above the horse's head; the pole runs over its edge
+  drawChatJuridicoFlag(ctx, isFlipped ? x0 : x0 + 17, by - 29, { isMirrored: isFlipped, flap: Math.floor(t * 8) % 2 });
+  for (let i = 0; i < 16; i++) P(14 + Math.floor(i / 4), -16 - i, 1, 1, i >= 14 ? '#e5e7eb' : C.wood);
   // the shield on the near side, its mark always read the right way round
   const shieldCol = 3;
   drawSlackShield(ctx, isFlipped ? x0 + 24 - shieldCol - 7 : x0 + shieldCol, by - 17);
@@ -2389,9 +2456,12 @@ export function drawKnightPortrait(ctx, look, ax, ay, t, level = 1) {
       D(col - 1, -19, 3, 1, SLACK.yellow);
       D(col, -18, 1, 1, SLACK.yellow);
     }
+    // the pennant with the finer mark, the pole back over its corner
+    drawChatJuridicoFlag(c, x + dx + 10, y + dy - 58, { flap: Math.floor(t * 8) % 2, isFine: true });
+    D(10, -56, 2, 2, C.wood);
     // lance: the steel tip shining, a lit edge along the shaft
-    D(11, -58, 1, 1, '#ffffff');
-    for (let i = 0; i < 12; i++) D(2 * (14 + Math.floor(i / 4)) - 24, 2 * (-16 - i), 1, 2, '#a8773f');
+    D(11, -62, 1, 1, '#ffffff');
+    for (let i = 0; i < 14; i++) D(2 * (14 + Math.floor(i / 4)) - 24, 2 * (-16 - i), 1, 2, '#a8773f');
     // shield: gold studs on the rim
     D(-17, -33, 1, 1, '#c99a2e');
     D(-6, -33, 1, 1, '#c99a2e');
