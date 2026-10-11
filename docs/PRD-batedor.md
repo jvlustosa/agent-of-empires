@@ -19,11 +19,12 @@ líder: a única unidade que não é sessão, nunca vai embora e responde pelo c
 
 ## Regras
 
-- **Só lê.** A ronda é um `claude -p` com `--restricted` (ignora os arquivos de configuração do
-  usuário, então nenhuma regra `allow` antiga vale para ele), `--tools ""` (nenhuma ferramenta
-  embutida: nada de Bash, edição ou web), e só as ferramentas de leitura dos conectores equipados em
-  `--allowedTools`. As de escrita (enviar, responder, rascunhar, apagar, criar página) ficam em
-  `--disallowedTools` mesmo assim.
+- **Só lê.** A ronda é um `claude -p` com `--tools ""` (nenhuma ferramenta embutida: nada de Bash,
+  edição ou web) e só as ferramentas de leitura dos conectores equipados em `--allowedTools`. As de
+  escrita (enviar, responder, rascunhar, apagar, criar página) ficam em `--disallowedTools`, que vence
+  qualquer `allow` do usuário. Carrega só a fonte de configuração do usuário (`--setting-sources user`),
+  porque os conectores do claude.ai só existem nela, com os hooks desligados
+  (`--settings '{"disableAllHooks":true}'`): o que o batedor lê não passa por plugin de memória.
 - **Nada começa sozinho.** O que ele lê é texto de terceiros e pode trazer instruções escondidas
   (prompt injection). Por isso uma missão nunca abre um agente: o usuário lê a tarefa, ajusta no Novo
   agente e só então manda o aldeão. O relatório passa por um esquema JSON (`--json-schema`) e é
@@ -76,6 +77,12 @@ líder: a única unidade que não é sessão, nunca vai embora e responde pelo c
   até ele**. Embaixo, as sugestões: as missões abertas, das urgentes para as baixas, com **Treinar
   em <base>** e **Descartar**. O título "Sugestões (N)" recolhe a lista (▾/▸) e a escolha fica
   salva, para o herói não empurrar os agentes para baixo quando há muitas missões.
+- **Ocultar**: o link **Ocultar** no topo do painel, ou a chave **Mostrar o Batedor** em
+  Configurações › Mapa, tira o cavaleiro do mapa, o botão da barra, a seção da barra lateral e os
+  pergaminhos das bases, e a tecla K deixa de abrir o painel. Oculto, ele não sai em ronda pelas
+  rotinas (para não gastar o plano sem ninguém ver). O estado fica no `scout.json`
+  (`isHidden`), então vale também com a janela na bandeja. Missões, diário e equipamento ficam
+  guardados; religar a chave traz tudo de volta. O aviso de "Batedor oculto" tem **Desfazer**.
 
 ### O painel (tecla K)
 
@@ -184,6 +191,7 @@ missão crítica ou alta manda notificação do sistema.
 | 4d | Bandeira do ChatJurídico na lança, no lugar da flâmula com as cores do Slack, nas três vistas e no painel | **Concluída** em 2026-10-04 |
 | 4e | Equipar e editar skills: busca, peso de cada uma na ronda, instruções editadas no painel (mesmo rascunho do equipamento), atalhos na aba Habilidades | **Concluída** em 2026-10-04; falta salvar uma skill de verdade no app |
 | 4f | Google Calendar (reuniões que já aconteceram; link reescrito para calendar.google.com, porque o redirecionador de google.com abriria qualquer site) e conectores próprios em `scout-connectors.json`, na pasta de config e fora do repositório: só ferramentas do próprio conector, domínios simples, arquivo com erro fica de fora inteiro | **Concluída** em 2026-10-04; falta uma ronda real com eles |
+| 4g | Ocultar o batedor (link no painel e chave em Configurações › Mapa); oculto, as rotinas não saem | **Concluída** em 2026-10-07, com testes do backend e verificada no Chrome headless com backend Tauri falso |
 | 5 | **Prestar contas**: o líder acompanha o aldeão e responde a quem pediu | Proposta: a próxima |
 | 6 | Convocar a tropa: missão de várias bases vira um esquadrão com um briefing só | Ideia |
 | 7 | Alerta na hora por Socket Mode, para crítico, sem esperar a ronda | Ideia |
@@ -204,9 +212,11 @@ missão crítica ou alta manda notificação do sistema.
   com backend falso: busca no espaço e na Bolsa, editor com foco, aviso por salvar, salvar, skill
   acima de 8.000, Editar e Equipar a partir de Habilidades. A suíte inteira (92) passa.
 - [ ] Salvar uma skill de verdade no app (Tauri) e conferir o SKILL.md no disco.
-- [ ] **Ronda de verdade no app**, contra o Slack. Não testada aqui: `--restricted` junto com os
-  conectores do claude.ai não foi conferido (o modo automático bloqueou o teste com `claude`
-  aninhado). Se o batedor voltar dizendo que não achou o Slack, é por aí que se começa.
+- [ ] **Ronda de verdade no app**, contra o Slack. Em 2026-10-11 o batedor voltou com "não achou
+  Slack": o `--restricted` derruba todos os conectores do claude.ai (o `--help` não diz isso), e
+  `--setting-sources ""` também. Trocado por `--setting-sources user` e hooks desligados; conferido com
+  `claude` 2.1.285 num ambiente limpo: Slack conectado, `slack_search_channels` lido sem negação,
+  ferramentas de escrita fora da lista, nenhum hook disparado. Falta clicar "Enviar batedor" no app.
 
 ## Etapa 5: prestar contas (a feature do líder)
 

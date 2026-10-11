@@ -2317,27 +2317,78 @@ body {
 .settings-body {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   padding: 16px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #6b4f2a transparent;
 }
 
-/* Exibição, Som, Bases no mapa: a rule above all but the first, like the menu's sections. */
-.settings-group {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.settings-group + .settings-group,
+/* Mapa, Painel, Som, Bases no mapa: folded to a title and a one-line summary of what is picked,
+   one open at a time, with a rule above all but the first like the menu's sections. */
+.settings-body > .settings-group + .settings-group,
 .settings-links {
-  padding-top: 16px;
+  padding-top: 12px;
   border-top: 1px solid var(--line);
 }
 
+.settings-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings-group-head::-webkit-details-marker {
+  display: none;
+}
+
+/* A pixel chevron: a hard triangle pointing right, down once the section is open. */
+.settings-group-head::before {
+  content: '';
+  flex: none;
+  align-self: center;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--accent);
+}
+
+.settings-group[open] > .settings-group-head::before {
+  border-top: 5px solid var(--accent);
+  border-right: 4px solid transparent;
+  border-bottom: 0;
+  border-left: 4px solid transparent;
+}
+
+.settings-group-head:hover .settings-group-summary {
+  color: var(--muted);
+}
+
+.settings-group-head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.settings-group-summary {
+  overflow: hidden;
+  min-width: 0;
+  margin-left: auto;
+  color: var(--dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+}
+
 .settings-group-title {
+  flex: none;
   margin: 0;
   color: var(--accent);
   font-size: 11px;
@@ -3704,12 +3755,13 @@ body {
   margin-top: 10px;
 }
 
+/* One line per limit: label, bar, percent and the reset in short; the full reset is in the tooltip. */
 .limit {
   display: grid;
-  grid-template-columns: 78px 1fr 34px;
-  grid-template-areas: 'label bar percent' '. reset reset';
+  grid-template-columns: 74px 1fr 30px 62px;
+  grid-template-areas: 'label bar percent reset';
   align-items: center;
-  column-gap: 8px;
+  column-gap: 6px;
   font-size: 11px;
   --limit-color: #4ade80;
 }
@@ -3724,7 +3776,9 @@ body {
 
 .limit-label {
   grid-area: label;
+  overflow: hidden;
   color: var(--muted);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -3751,8 +3805,11 @@ body {
 
 .limit-reset {
   grid-area: reset;
+  overflow: hidden;
   color: var(--dim);
   font-size: 10px;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .limit-stale {
@@ -3790,6 +3847,80 @@ body {
   .limit-alert {
     animation: none;
   }
+}
+
+.limit-alert-switch {
+  justify-self: start;
+  margin-top: 2px;
+  color: #fecaca;
+  font-size: 11px;
+}
+
+/* Several Claude accounts: one button each over the bars, the active one lit in gold. */
+.account-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.account-chip:hover:not([aria-pressed='true']) {
+  border-color: var(--dim);
+  color: var(--text);
+}
+
+.account-chip[aria-pressed='true'] {
+  border-color: #fbbf24;
+  background: #2e2610;
+  color: var(--text);
+  cursor: default;
+}
+
+.account-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.account-chip-percent,
+.account-limit strong {
+  color: #4ade80;
+  font-weight: 600;
+}
+
+.account-chip-percent[data-severity='warning'],
+.account-limit[data-severity='warning'] strong {
+  color: #fbbf24;
+}
+
+.account-chip-percent[data-severity='critical'],
+.account-limit[data-severity='critical'] strong {
+  color: #f87171;
+}
+
+.account-limit small {
+  margin-left: 6px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.account-active {
+  color: #fbbf24;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 /* A limit that just reset: a gold glow pulsing a few times, like a resource pile refilled. */
@@ -3838,6 +3969,11 @@ body {
   margin-top: 4px;
   background: var(--team);
   box-shadow: 0 0 0 1px #0008;
+}
+
+.card-portrait {
+  --swatch: var(--team);
+  margin-top: 1px;
 }
 
 .card-main {
@@ -4324,6 +4460,10 @@ body {
   top: 6vh;
   width: min(760px, calc(100vw - 32px));
   max-height: 88vh;
+}
+
+.scout-hide {
+  margin: 0 12px 0 auto;
 }
 
 .scout-hero {

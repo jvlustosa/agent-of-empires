@@ -48,6 +48,9 @@ pub struct Config {
     pub extra_repos: Vec<String>,
     /// Fetch the plan limits from Anthropic's API, the only network call the app makes.
     pub is_usage_on: bool,
+    /// The Claude account (its Claude Code config dir) new agents and the scout run on; None is
+    /// the app's own.
+    pub claude_account: Option<String>,
 }
 
 impl Config {
@@ -182,6 +185,12 @@ pub fn finish_setup(app: AppHandle, choices: Choices) -> Result<(), String> {
 pub fn set_usage_on(is_on: bool) -> Result<(), String> {
     let mut config = Config::load();
     config.is_usage_on = is_on;
+    config.save()
+}
+
+pub fn set_claude_account(dir: String) -> Result<(), String> {
+    let mut config = Config::load();
+    config.claude_account = Some(dir);
     config.save()
 }
 

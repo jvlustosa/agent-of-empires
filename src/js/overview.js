@@ -1,6 +1,7 @@
 // "Visão do império": every repository of ~/Code as the empire sees it. The explored ones are bases
 // with their resources from the last 7 days (all real data: git and agent hours); the others wait
 // under the fog of war until an agent explores them.
+import { formatElapsed } from './kinds.js';
 import { ERAS, TOWN_STYLES, drawGrass, drawTownCenter } from './sprites.js';
 
 const compact = new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 });
@@ -156,14 +157,16 @@ function spendPanel(days, plan) {
   const tiles = el('div', 'cost-tiles');
   tiles.append(costTile(formatUsd(cost), 'em preço de API', 'Entrada, saída, escrita e leitura de cache, cada resposta pelo preço de lista do seu modelo'));
   const parts = [tiles];
+  // Several Claude Code profiles sharing the same sessions come summed, as "Team Premium + Max 5x".
+  const subscription = plan?.name.includes(' + ') ? `assinaturas ${plan.name}` : `assinatura ${plan?.name}`;
   if (!plan) {
-    parts.push(el('p', 'modal-note', 'Plano não identificado (sem login no Claude Code, ou plano Team/Enterprise): sem comparação com a assinatura.'));
+    parts.push(el('p', 'modal-note', 'Plano não identificado (sem login no Claude Code, ou plano Enterprise): sem comparação com a assinatura.'));
   } else if (cost <= plan.monthlyUsd) {
-    tiles.append(costTile(`${formatUsd(plan.monthlyUsd)}/mês`, `assinatura ${plan.name}`), costTile(formatUsd(plan.monthlyUsd - cost), 'a assinatura custou a mais'));
+    tiles.append(costTile(`${formatUsd(plan.monthlyUsd)}/mês`, subscription), costTile(formatUsd(plan.monthlyUsd - cost), 'a assinatura custou a mais'));
   } else {
     const paidPercent = Math.min(99, Math.max(1, Math.round((plan.monthlyUsd / cost) * 100)));
     tiles.append(
-      costTile(`${formatUsd(plan.monthlyUsd)}/mês`, `assinatura ${plan.name}`),
+      costTile(`${formatUsd(plan.monthlyUsd)}/mês`, subscription),
       costTile(formatUsd(cost - plan.monthlyUsd), `subsidiados · ${whole.format(Math.round(cost / plan.monthlyUsd))}× o que você paga`),
     );
     const split = el('div', 'cost-split');
@@ -181,9 +184,11 @@ function spendPanel(days, plan) {
 
 /**
  * teamOf(name): [color, shade]; displayName(name): the nickname or the repo; wondersOf(name):
- * its wonder ids; getAchievements/getEvents/getUsage: the progression and the usage metrics.
+ * its wonder ids; getAchievements/getEvents/getUsage: the progression and the usage metrics;
+ * getAccounts/onPickAccount: the Claude accounts and picking the one new agents use;
+ * formatReset/limitSeverity: how the map's bars read a limit.
  */
-export function createOverview({ getStats, designOf, isInEmpire, hasBase, onShowBase, onPlaceBase, onExplore, teamOf, displayName, wondersOf, getAchievements, getEvents, getUsage, onOpen }) {
+export function createOverview({ getStats, designOf, isInEmpire, hasBase, onShowBase, onPlaceBase, onExplore, teamOf, displayName, wondersOf, getAchievements, getEvents, getUsage, getAccounts, onPickAccount, formatReset, limitSeverity, onOpen }) {
   const dialog = document.getElementById('overview');
   const backdrop = document.getElementById('overview-backdrop');
   const summary = document.getElementById('overview-summary');
@@ -196,6 +201,9 @@ export function createOverview({ getStats, designOf, isInEmpire, hasBase, onShow
   const historyEl = document.getElementById('overview-history');
   const eventsEl = document.getElementById('overview-events');
   const usageEl = document.getElementById('overview-usage');
+  const accountsSection = document.getElementById('overview-accounts-section');
+  const accountsEl = document.getElementById('overview-accounts');
+  const accountsNote = document.getElementById('overview-accounts-note');
   let returnFocus = null;
 
   function emblem(repo) {
@@ -253,7 +261,57 @@ export function createOverview({ getStats, designOf, isInEmpire, hasBase, onShow
     return row;
   }
 
+  function limitCell(account, kind) {
+    const cell = el('td', 'overview-num account-limit');
+    const limit = account.usage?.limits.find((item) => item.kind === kind);
+    if (!limit) {
+      cell.textContent = '—';
+      return cell;
+    }
+    cell.dataset.severity = limitSeverity(limit);
+    cell.append(el('strong', null, `${Math.round(limit.percent)}%`), el('small', null, formatReset(limit.resetsAt)));
+    return cell;
+  }
+
+  // One row per Claude account: its plan, both limits, and whether new agents run on it.
+  function accountRow(account) {
+    const row = el('tr');
+    const name = el('td');
+    const text = el('span', 'overview-base-text');
+    const stale = account.usage?.isStale ? ` · dados de ${formatElapsed(account.usage.fetchedAt)} atrás` : '';
+    text.append(el('strong', null, account.name), el('small', null, `${account.folder}${stale}`));
+    name.append(text);
+    const price = el('td', 'overview-num', account.plan ? `${formatUsd(account.plan.monthlyUsd)}/mês` : '—');
+    const action = el('td');
+    if (account.isActive) {
+      action.append(el('span', 'account-active', 'Ativa'));
+    } else {
+      const button = el('button', 'link-button', 'Usar');
+      button.type = 'button';
+      button.title = 'Novos agentes e o Batedor passam a usar esta conta';
+      button.addEventListener('click', () => onPickAccount(account));
+      action.append(button);
+    }
+    row.append(name, price, limitCell(account, 'session'), limitCell(account, 'weekly_all'), action);
+    return row;
+  }
+
+  function renderAccounts() {
+    const accounts = getAccounts();
+    accountsSection.hidden = accounts.length === 0;
+    accountsEl.replaceChildren(...accounts.map(accountRow));
+    const notes = [
+      accounts.length > 1
+        ? 'Agentes novos aqui no app e no terminal, e o Batedor, usam a conta ativa. No Cursor vale a conta logada na extensão.'
+        : 'Uma conta só. Outra conta entra aqui quando o perfil dela (CLAUDE_CONFIG_DIR) usa a mesma pasta projects.',
+      accounts.some((account) => account.usage?.isStale) ? 'Dados antigos: o token da conta renova quando um agente roda nela.' : null,
+      accounts.length && accounts.every((account) => !account.usage) ? 'Ligue "Mostrar limites do Claude" em Configurações para ver o uso de cada conta.' : null,
+    ];
+    accountsNote.textContent = notes.filter(Boolean).join(' ');
+  }
+
   function render() {
+    renderAccounts(); // from the accounts poll, ready before the empire is counted
     const stats = getStats();
     if (!stats) {
       summary.textContent = 'Contando o império (git e horas de agente)…';
@@ -358,5 +416,5 @@ export function createOverview({ getStats, designOf, isInEmpire, hasBase, onShow
   document.getElementById('overview-close').addEventListener('click', close);
   backdrop.addEventListener('click', close);
 
-  return { open, close, render, isOpen: () => !dialog.hidden };
+  return { open, close, render, renderAccounts, isOpen: () => !dialog.hidden };
 }

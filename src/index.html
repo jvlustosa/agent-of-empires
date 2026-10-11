@@ -96,8 +96,9 @@
         <button class="icon-button" id="settings-close" type="button" aria-label="Fechar configurações">✕</button>
       </header>
       <div class="settings-body">
-        <section class="settings-group" aria-labelledby="settings-display-title">
-          <h3 class="settings-group-title" id="settings-display-title">Exibição</h3>
+        <details class="settings-group" name="settings-section" data-section="map">
+          <summary class="settings-group-head"><span class="settings-group-title">Mapa</span><span class="settings-group-summary"></span></summary>
+          <div class="settings-group-body">
           <fieldset class="deploy-modes view-setting">
             <legend class="toggle-text">Vista do mapa <small>Tecla V alterna; Q e E giram; F deixa só o mapa.</small></legend>
             <label class="deploy-mode">
@@ -121,6 +122,14 @@
               <small>Só bases, estradas e aldeões, sem árvores, vilas, sombras nem noite. Usa cerca de metade do processador.</small>
             </span>
           </label>
+          <label class="toggle">
+            <input type="checkbox" id="scout-toggle" role="switch" checked />
+            <span class="toggle-track" aria-hidden="true"></span>
+            <span class="toggle-text">
+              Mostrar o Batedor
+              <small>O cavaleiro no mapa, o botão na barra e as sugestões no painel. Oculto, ele não sai em ronda sozinho.</small>
+            </span>
+          </label>
           <fieldset class="deploy-modes view-setting">
             <legend class="toggle-text">Borda do mapa</legend>
             <label class="deploy-mode">
@@ -132,6 +141,11 @@
               <span><strong>Floresta</strong><small>Uma fileira de árvores em volta do mapa.</small></span>
             </label>
           </fieldset>
+          </div>
+        </details>
+        <details class="settings-group" name="settings-section" data-section="panel">
+          <summary class="settings-group-head"><span class="settings-group-title">Painel</span><span class="settings-group-summary"></span></summary>
+          <div class="settings-group-body">
           <fieldset class="deploy-modes view-setting">
             <legend class="toggle-text">Lado do painel <small>Ctrl+B recolhe e reabre o painel.</small></legend>
             <label class="deploy-mode">
@@ -171,9 +185,11 @@
               <small>Uso da sessão (janela de 5 h) e da semana, com quando reiniciam.</small>
             </span>
           </label>
-        </section>
-        <section class="settings-group" aria-labelledby="settings-sound-title">
-          <h3 class="settings-group-title" id="settings-sound-title">Som</h3>
+          </div>
+        </details>
+        <details class="settings-group" name="settings-section" data-section="sound">
+          <summary class="settings-group-head"><span class="settings-group-title">Som</span><span class="settings-group-summary"></span></summary>
+          <div class="settings-group-body">
           <label class="toggle">
             <input type="checkbox" id="sound-toggle" role="switch" />
             <span class="toggle-track" aria-hidden="true"></span>
@@ -211,13 +227,16 @@
             <span class="now-playing-title" id="music-now" aria-live="polite">…</span>
             <button class="link-button" id="music-next" type="button" title="Próxima música (tecla M)">Próxima ⏭</button>
           </div>
-        </section>
-        <section class="settings-group" aria-labelledby="bases-title">
-          <h3 class="settings-group-title" id="bases-title">Bases no mapa</h3>
+          </div>
+        </details>
+        <details class="settings-group" name="settings-section" data-section="bases">
+          <summary class="settings-group-head"><span class="settings-group-title">Bases no mapa</span><span class="settings-group-summary"></span></summary>
+          <div class="settings-group-body">
           <p class="settings-group-hint">O alfinete fixa a base no mapa mesmo sem agentes; a chave mostra ou esconde. Arraste o Centro da Cidade para mudar de lugar.</p>
           <ul class="base-list" id="base-list"></ul>
           <button class="base-add" id="base-add" type="button">+ Adicionar repositório</button>
-        </section>
+          </div>
+        </details>
         <div class="settings-links">
           <button class="link-button" id="onboarding-open" type="button">Rever a introdução</button>
           <button class="link-button" id="shortcuts-open" type="button">Atalhos do teclado <kbd>?</kbd></button>
@@ -367,6 +386,18 @@
         <h3 class="field-label overview-section-title">Tokens e custo · últimos 30 dias</h3>
         <div class="overview-spend" id="overview-spend"></div>
         <p class="modal-note">Quanto o uso custaria pago por requisição na API do Claude, pelo preço de lista de cada modelo (cache incluído), contra o preço de tabela da sua assinatura. Conta as sessões nos repositórios de ~/Code.</p>
+        <div id="overview-accounts-section" hidden>
+          <h3 class="field-label overview-section-title">Contas Claude</h3>
+          <div class="overview-table-wrap">
+            <table class="overview-table">
+              <thead>
+                <tr><th scope="col">Conta</th><th scope="col">Plano</th><th scope="col">Sessão (5 h)</th><th scope="col">Semana</th><th scope="col"><span class="sr-only">Uso</span></th></tr>
+              </thead>
+              <tbody id="overview-accounts"></tbody>
+            </table>
+          </div>
+          <p class="modal-note" id="overview-accounts-note"></p>
+        </div>
         <h3 class="field-label overview-section-title">Bases · últimos 7 dias</h3>
         <div class="overview-table-wrap">
           <table class="overview-table">
@@ -391,6 +422,7 @@
     <section class="modal scout" id="scout" role="dialog" aria-modal="true" aria-labelledby="scout-title" hidden>
       <header class="settings-head">
         <h2 id="scout-title">O Batedor</h2>
+        <button class="link-button scout-hide" id="scout-hide" type="button" title="Tira o batedor do mapa e do painel; as rotinas param até ele voltar">Ocultar</button>
         <button class="icon-button" id="scout-close" type="button" aria-label="Fechar">✕</button>
       </header>
       <div class="modal-body">

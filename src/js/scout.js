@@ -225,6 +225,8 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
   const journalEl = document.getElementById('scout-journal');
   const badge = document.getElementById('scout-badge');
   const strip = document.getElementById('scout-strip');
+  const barButton = document.getElementById('scout-open');
+  const shownToggle = document.getElementById('scout-toggle');
   const tabs = [...dialog.querySelectorAll('.scout-tab')];
   const roTabs = [...dialog.querySelectorAll('.ro-tab')];
 
@@ -301,7 +303,8 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     const wasScouting = state?.isScouting;
     const previousRound = state?.lastRound?.at;
     state = next;
-    onState({ level: state.level, isScouting: state.isScouting, missions: missionsByBase(state) });
+    onState({ level: state.level, isScouting: state.isScouting, missions: missionsByBase(state), isHidden: state.isHidden });
+    shownToggle.checked = !state.isHidden;
     renderBadge();
     renderStrip();
     if (wasScouting && !state.isScouting && state.lastRound && state.lastRound.at !== previousRound) announceRound();
@@ -327,7 +330,8 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     badge.hidden = open.length === 0;
     badge.textContent = String(open.length);
     badge.classList.toggle('is-urgent', open.some((mission) => mission.severity === 'critical' || mission.severity === 'high'));
-    document.getElementById('scout-open').classList.toggle('is-out', state.isScouting);
+    barButton.classList.toggle('is-out', state.isScouting);
+    barButton.hidden = state.isHidden;
   }
 
   // The routines ride out with the bases on the map, so the backend keeps the list current.
@@ -347,7 +351,8 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     const missions = state.missions
       .filter((mission) => mission.status === 'open')
       .sort((a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity));
-    strip.hidden = false;
+    strip.hidden = state.isHidden;
+    if (state.isHidden) return;
     if (!missions.length) {
       strip.replaceChildren(heroCard(), el('p', 'scout-tips-title', 'Nenhuma missão aberta'));
       return;
@@ -1480,7 +1485,7 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
   // From a base's parchment it opens on that base's missions; otherwise on the equipment window. The
   // state is read again first: the scout's file may have changed outside the panel.
   async function open({ project = null, tab = project ? 'scout-tab-missions' : 'scout-tab-equipment' } = {}) {
-    if (!state) return;
+    if (!state || state.isHidden) return;
     await extrasRead;
     try {
       apply(await invoke('get_scout'));
@@ -1521,6 +1526,22 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
     }
   }
 
+  // Off the map and the side panel, or back; hidden, its routines wait.
+  async function setHidden(isHidden) {
+    try {
+      apply(await invoke('set_scout_hidden', { isHidden }));
+    } catch (err) {
+      showToast(String(err), true);
+      if (state) shownToggle.checked = !state.isHidden;
+    }
+  }
+
+  async function hide() {
+    if (!(await close())) return;
+    await setHidden(true);
+    if (state?.isHidden) showToast('Batedor oculto. Ele volta em Configurações › Mapa', false, { label: 'Desfazer', onClick: () => setHidden(false) });
+  }
+
   /** After "Treinar aldeão": the villager took the mission (and the scout earns for it). */
   function taken(mission, project) {
     setStatus(mission, 'started', project);
@@ -1557,13 +1578,14 @@ export function createScout({ invoke, showToast, getBases, displayName, onTrain,
   dialog.querySelector('.ro-tabs').addEventListener('keydown', arrowKeys(roTabs, selectRoTab));
   // The bottom bar's button: a click brings the camera to it and shows its suggestions in the side
   // panel, a double click opens the full panel.
-  const barButton = document.getElementById('scout-open');
   barButton.addEventListener('click', () => {
     onFocus();
     showStrip();
   });
   barButton.addEventListener('dblclick', () => open());
   document.getElementById('scout-close').addEventListener('click', close);
+  document.getElementById('scout-hide').addEventListener('click', hide);
+  shownToggle.addEventListener('change', () => setHidden(!shownToggle.checked));
   backdrop.addEventListener('click', close);
   dialog.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {

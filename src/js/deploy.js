@@ -52,7 +52,7 @@ function el(tag, className, text) {
 }
 
 // getTeam and getDesign: the repo's flag colors and town center as the map draws them.
-export function createDeployDialog({ invoke, showToast, getAgents, getTeam, getDesign, onDeployed, onPinned, openMenu }) {
+export function createDeployDialog({ invoke, showToast, getAgents, getTeam, getDesign, onDeployed, onPinned, openMenu, describeAccount }) {
   const dialog = document.getElementById('deploy');
   const backdrop = document.getElementById('deploy-backdrop');
   const search = document.getElementById('deploy-search');
@@ -235,7 +235,8 @@ export function createDeployDialog({ invoke, showToast, getAgents, getTeam, getD
     submit.disabled = !selected || isMissingTask;
     submit.title = !selected ? 'Escolha um projeto' : isMissingTask ? 'Escreva a tarefa (no terminal dá para abrir sem)' : '';
     pinButton.disabled = !selected;
-    modeHint.textContent = dialog.querySelector('input[name="deploy-mode"]:checked')?.dataset.hint ?? '';
+    const hint = dialog.querySelector('input[name="deploy-mode"]:checked')?.dataset.hint ?? '';
+    modeHint.textContent = [hint, describeAccount(currentMode())].filter(Boolean).join(' ');
   }
 
   function choose(project) {

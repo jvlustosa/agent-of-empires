@@ -8,7 +8,8 @@ use crate::transcript::parse_timestamp_ms;
 use serde::Serialize;
 use serde_json::Value;
 use std::io::Write;
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -50,6 +51,11 @@ impl Usage {
     pub fn session_start(&self) -> Option<i64> {
         let session = self.limits.iter().find(|limit| limit.kind == "session")?;
         session.resets_at.map(|resets_at| resets_at - SESSION_WINDOW_MS)
+    }
+
+    /// Every limit short of ALERT_PERCENT: an account worth moving new agents to.
+    pub fn has_room(&self) -> bool {
+        self.limits.iter().all(|limit| limit.percent < ALERT_PERCENT)
     }
 }
 
@@ -103,31 +109,185 @@ pub struct Plan {
     pub monthly_usd: f64,
 }
 
-fn oauth_credentials() -> Option<Value> {
-    let path = home()?.join(".claude").join(".credentials.json");
-    let mut credentials: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+const CONFIG_DIR_VAR: &str = "CLAUDE_CONFIG_DIR";
+const UNKNOWN_PLAN: &str = "Conta Claude";
+
+/// Claude Code's config dir: CLAUDE_CONFIG_DIR when set, else ~/.claude.
+fn claude_dir() -> Option<PathBuf> {
+    std::env::var_os(CONFIG_DIR_VAR).map(PathBuf::from).or_else(|| Some(home()?.join(".claude")))
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// Where Claude Code keeps a profile's .claude.json: inside it for a CLAUDE_CONFIG_DIR profile, in
+/// the home dir for the default ~/.claude.
+fn claude_json_of(home: &Path, dir: &Path) -> PathBuf {
+    let inside = dir.join(".claude.json");
+    if inside.exists() || !same_dir(dir, &home.join(".claude")) {
+        inside
+    } else {
+        home.join(".claude.json")
+    }
+}
+
+fn oauth_credentials_in(dir: &Path) -> Option<Value> {
+    let mut credentials: Value = serde_json::from_slice(&std::fs::read(dir.join(".credentials.json")).ok()?).ok()?;
     credentials.get_mut("claudeAiOauth").map(Value::take)
 }
 
-/// Read from the plan fields of Claude Code's credentials, never its token. None for Team and
-/// Enterprise seats, priced per contract.
-pub fn plan() -> Option<Plan> {
-    plan_from(&oauth_credentials()?)
+/// The Claude Code profiles whose sessions the empire counts: `main` and every ~/.claude or
+/// ~/.claude-* (another account through CLAUDE_CONFIG_DIR) whose projects dir links to the same one.
+/// A profile with its own projects dir is left out, since its tokens are not in the cost.
+fn counted_profiles(home: &Path, main: &Path) -> Vec<PathBuf> {
+    let Ok(projects) = main.join("projects").canonicalize() else { return vec![main.to_path_buf()] };
+    let main_real = main.canonicalize().unwrap_or_else(|_| main.to_path_buf());
+    let mut others: Vec<PathBuf> = std::fs::read_dir(home)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|dir| dir.file_name().and_then(|name| name.to_str()).is_some_and(|name| name == ".claude" || name.starts_with(".claude-")))
+        .filter(|dir| dir.canonicalize().is_ok_and(|real| real != main_real))
+        .filter(|dir| dir.join("projects").canonicalize().is_ok_and(|real| real == projects))
+        .collect();
+    others.sort();
+    std::iter::once(main.to_path_buf()).chain(others).collect()
 }
 
+/// A Claude account logged in on this machine (a Claude Code profile) whose sessions the map shows.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    /// Its Claude Code config dir: the id the screen hands back to pick it.
+    pub dir: String,
+    /// The plan, with the folder when two accounts share it: "Team Premium", "Max 5x (~/.claude-b)".
+    pub name: String,
+    /// The config dir as "~/.claude-pessoal".
+    pub folder: String,
+    pub plan: Option<Plan>,
+    /// New agents and the scout run on the active account, and the bars on the map follow it.
+    pub is_active: bool,
+    pub usage: Option<Usage>,
+}
+
+/// The logged-in profiles sharing the map's sessions, the app's own config dir first. `saved` (the
+/// dir picked in the app) is the active one while it is still here, else the first. No usage yet.
+pub fn accounts(saved: Option<&str>) -> Vec<Account> {
+    let (Some(home), Some(main)) = (home(), claude_dir()) else { return Vec::new() };
+    let dirs: Vec<PathBuf> = counted_profiles(&home, &main).into_iter().filter(|dir| dir.join(".credentials.json").is_file()).collect();
+    let active = dirs.iter().position(|dir| saved.is_some_and(|saved| Path::new(saved) == dir)).unwrap_or(0);
+    let plans: Vec<Option<Plan>> = dirs.iter().map(|dir| plan_from(&oauth_credentials_in(dir)?)).collect();
+    let plan_name = |plan: &Option<Plan>| plan.as_ref().map_or(UNKNOWN_PLAN.to_string(), |plan| plan.name.clone());
+    dirs.iter()
+        .zip(&plans)
+        .enumerate()
+        .map(|(index, (dir, plan))| {
+            let folder = dir.strip_prefix(&home).map_or_else(|_| dir.display().to_string(), |rest| format!("~/{}", rest.display()));
+            let base = plan_name(plan);
+            let is_shared = plans.iter().filter(|other| plan_name(other) == base).count() > 1;
+            Account {
+                dir: dir.display().to_string(),
+                name: if is_shared { format!("{base} ({folder})") } else { base },
+                folder,
+                plan: plan.clone(),
+                is_active: index == active,
+                usage: None,
+            }
+        })
+        .collect()
+}
+
+/// The subscriptions behind the counted sessions, from the plan fields of each account's
+/// credentials, never its token. None when one is Enterprise (seat plus usage at API prices) or
+/// none is logged in: a partial sum would overstate the subsidy.
+pub fn plan() -> Option<Plan> {
+    let plans: Vec<Plan> = accounts(None).into_iter().map(|account| account.plan).collect::<Option<_>>()?;
+    if plans.is_empty() {
+        return None;
+    }
+    let name = plans.iter().map(|plan| plan.name.as_str()).collect::<Vec<_>>().join(" + ");
+    Some(Plan { name, monthly_usd: plans.iter().map(|plan| plan.monthly_usd).sum() })
+}
+
+/// List prices billed monthly. A Team premium seat carries the Max rate limit tier.
 fn plan_from(oauth: &Value) -> Option<Plan> {
     let tier = oauth.get("rateLimitTier").and_then(Value::as_str).unwrap_or_default();
     let (name, monthly_usd) = match oauth.get("subscriptionType").and_then(Value::as_str)? {
         "pro" => ("Pro", 20.0),
         "max" if tier.contains("20x") => ("Max 20x", 200.0),
         "max" => ("Max 5x", 100.0),
+        "team" if tier.contains("max") => ("Team Premium", 125.0),
+        "team" => ("Team Standard", 25.0),
         _ => return None,
     };
     Some(Plan { name: name.into(), monthly_usd })
 }
 
-fn access_token() -> Option<String> {
-    let oauth = oauth_credentials()?;
+/// How a `claude` we start reaches an account, through CLAUDE_CONFIG_DIR.
+#[derive(Debug, PartialEq)]
+pub enum ConfigDirEnv {
+    /// The app's own account: the environment as it is.
+    Keep,
+    /// The default ~/.claude, whose .claude.json sits in the home dir: the variable must go.
+    Unset,
+    Set(PathBuf),
+}
+
+impl ConfigDirEnv {
+    pub fn apply(&self, command: &mut Command) {
+        match self {
+            Self::Keep => {}
+            Self::Unset => {
+                command.env_remove(CONFIG_DIR_VAR);
+            }
+            Self::Set(dir) => {
+                command.env(CONFIG_DIR_VAR, dir);
+            }
+        }
+    }
+
+    /// The same as a command prefix, for a terminal: some (gnome-terminal) start the shell from a
+    /// server that never sees our environment.
+    pub fn prefix(&self) -> Vec<OsString> {
+        match self {
+            Self::Keep => Vec::new(),
+            Self::Unset => vec!["env".into(), "-u".into(), CONFIG_DIR_VAR.into()],
+            Self::Set(dir) => {
+                let mut assignment = OsString::from(format!("{CONFIG_DIR_VAR}="));
+                assignment.push(dir);
+                vec!["env".into(), assignment]
+            }
+        }
+    }
+}
+
+fn config_dir_env(account: &Path, own: &Path, default: &Path) -> ConfigDirEnv {
+    if same_dir(account, own) {
+        ConfigDirEnv::Keep
+    } else if same_dir(account, default) {
+        ConfigDirEnv::Unset
+    } else {
+        ConfigDirEnv::Set(account.to_path_buf())
+    }
+}
+
+/// The environment for a `claude` on the account picked in the app.
+pub fn active_env() -> ConfigDirEnv {
+    let saved = crate::onboarding::Config::load().claude_account;
+    let active = accounts(saved.as_deref()).into_iter().find(|account| account.is_active);
+    match (active, claude_dir(), home()) {
+        (Some(account), Some(own), Some(home)) => config_dir_env(Path::new(&account.dir), &own, &home.join(".claude")),
+        _ => ConfigDirEnv::Keep,
+    }
+}
+
+fn access_token(dir: &Path) -> Option<String> {
+    let oauth = oauth_credentials_in(dir)?;
     let expires_at = oauth.get("expiresAt").and_then(Value::as_i64).unwrap_or(i64::MAX);
     if expires_at <= now_ms() {
         return None; // Claude Code refreshes it next time it runs; we never write credentials
@@ -135,8 +295,8 @@ fn access_token() -> Option<String> {
     oauth.get("accessToken").and_then(Value::as_str).map(str::to_string)
 }
 
-fn fetch_live() -> Option<Usage> {
-    let token = access_token()?;
+fn fetch_live(dir: &Path) -> Option<Usage> {
+    let token = access_token(dir)?;
     let config = format!(
         "url = \"{USAGE_URL}\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"anthropic-beta: {OAUTH_BETA}\"\n\
          header = \"Accept: application/json\"\nsilent\nfail\nmax-time = {REQUEST_TIMEOUT_SECS}\n"
@@ -158,8 +318,8 @@ fn fetch_live() -> Option<Usage> {
     Some(Usage { limits: parse_limits(&response), fetched_at: now_ms(), is_stale: false })
 }
 
-fn read_cached() -> Option<Usage> {
-    let config: Value = serde_json::from_slice(&std::fs::read(home()?.join(".claude.json")).ok()?).ok()?;
+fn read_cached(dir: &Path) -> Option<Usage> {
+    let config: Value = serde_json::from_slice(&std::fs::read(claude_json_of(&home()?, dir)).ok()?).ok()?;
     let cached = config.get("cachedUsageUtilization")?;
     Some(Usage {
         limits: parse_limits(cached.get("utilization")?),
@@ -168,12 +328,12 @@ fn read_cached() -> Option<Usage> {
     })
 }
 
-/// Live when it answers; otherwise the freshest copy at hand, our last live answer or Claude
-/// Code's cache, so one failed fetch does not throw the bars back hours.
-pub fn current_usage(last_live: Option<&Usage>) -> Option<Usage> {
-    fetch_live().or_else(|| {
+/// The account in `dir`: live when it answers; otherwise the freshest copy at hand, our last live
+/// answer or Claude Code's cache, so one failed fetch does not throw the bars back hours.
+pub fn current_usage(dir: &Path, last_live: Option<&Usage>) -> Option<Usage> {
+    fetch_live(dir).or_else(|| {
         let ours = last_live.map(|usage| Usage { is_stale: true, ..usage.clone() });
-        [ours, read_cached()].into_iter().flatten().max_by_key(|usage| usage.fetched_at)
+        [ours, read_cached(dir)].into_iter().flatten().max_by_key(|usage| usage.fetched_at)
     })
 }
 
@@ -241,7 +401,40 @@ mod tests {
         assert_eq!(plan("max", "default_claude_max_5x"), Some(("Max 5x".into(), 100.0)));
         assert_eq!(plan("max", "default_claude_max_20x"), Some(("Max 20x".into(), 200.0)));
         assert_eq!(plan("pro", "default_claude_ai"), Some(("Pro".into(), 20.0)));
+        assert_eq!(plan("team", "default_claude_max_5x"), Some(("Team Premium".into(), 125.0)));
+        assert_eq!(plan("team", "default_raven"), Some(("Team Standard".into(), 25.0)));
         assert_eq!(plan("enterprise", ""), None);
+    }
+
+    #[test]
+    fn profiles_sharing_the_projects_dir_are_counted_together() {
+        let home = std::env::temp_dir().join(format!("aoe-usage-profiles-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        for dir in [".claude/projects", ".claude-alone/projects", ".claude-mem"] {
+            std::fs::create_dir_all(home.join(dir)).unwrap();
+        }
+        std::fs::create_dir_all(home.join(".claude-pessoal")).unwrap();
+        std::os::unix::fs::symlink(home.join(".claude/projects"), home.join(".claude-pessoal/projects")).unwrap();
+        let main = home.join(".claude");
+        assert_eq!(counted_profiles(&home, &main), [main.clone(), home.join(".claude-pessoal")]);
+        // From the linked profile, the main one is found the same way.
+        assert_eq!(counted_profiles(&home, &home.join(".claude-pessoal")), [home.join(".claude-pessoal"), main.clone()]);
+        // The default profile keeps its .claude.json in the home dir; the others inside themselves.
+        assert_eq!(claude_json_of(&home, &main), home.join(".claude.json"));
+        assert_eq!(claude_json_of(&home, &home.join(".claude-pessoal")), home.join(".claude-pessoal/.claude.json"));
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn claude_reaches_the_picked_account_through_its_config_dir() {
+        let (default, other) = (Path::new("/home/u/.claude"), Path::new("/home/u/.claude-pessoal"));
+        // The app's own account runs as it does today; the default one must not carry the variable.
+        assert_eq!(config_dir_env(default, default, default), ConfigDirEnv::Keep);
+        assert_eq!(config_dir_env(other, default, default), ConfigDirEnv::Set(other.into()));
+        assert_eq!(config_dir_env(default, other, default), ConfigDirEnv::Unset);
+        assert_eq!(ConfigDirEnv::Set(other.into()).prefix(), ["env", "CLAUDE_CONFIG_DIR=/home/u/.claude-pessoal"]);
+        assert_eq!(ConfigDirEnv::Unset.prefix(), ["env", "-u", "CLAUDE_CONFIG_DIR"]);
+        assert!(ConfigDirEnv::Keep.prefix().is_empty());
     }
 
     #[test]
@@ -322,8 +515,11 @@ mod tests {
     #[test]
     #[ignore = "hits the network with the local Claude Code login; run with --ignored"]
     fn live_usage_smoke() {
-        let usage = current_usage(None).expect("usage from API or cache");
-        assert!(!usage.is_stale, "expected a live answer, got the cache");
-        assert!(usage.limits.iter().any(|l| l.kind == "session"));
+        for account in accounts(None) {
+            let usage = current_usage(Path::new(&account.dir), None).expect("usage from API or cache");
+            let percents: Vec<_> = usage.limits.iter().map(|l| format!("{} {}%", l.label, l.percent)).collect();
+            println!("{} ({}, active: {}): stale {} · {}", account.name, account.folder, account.is_active, usage.is_stale, percents.join(" · "));
+            assert!(usage.limits.iter().any(|l| l.kind == "session"));
+        }
     }
 }

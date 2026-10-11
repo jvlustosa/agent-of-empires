@@ -19,6 +19,7 @@ mod usage;
 
 use approval::{ApprovalRequest, Approvals, Decision};
 use collector::{Collector, Snapshot};
+use std::collections::HashMap;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -37,6 +38,7 @@ const HANDOFF_WAIT: Duration = Duration::from_secs(8);
 const USAGE_EVENT: &str = "usage";
 // Every minute, so the bars follow the work (claude.ai use counts too, unseen by the transcripts).
 const USAGE_POLL_INTERVAL: Duration = Duration::from_secs(60);
+const ACCOUNTS_EVENT: &str = "accounts";
 const LIMIT_RESET_EVENT: &str = "limit_reset";
 const MUSIC_TRACK_EVENT: &str = "music_track";
 const APP_NAME: &str = "Agent of Empires";
@@ -52,6 +54,10 @@ struct RefreshTrigger(mpsc::Sender<()>);
 
 #[derive(Default)]
 struct LatestUsage(Mutex<Option<usage::Usage>>);
+
+/// Every Claude account on this machine with its plan and limits, the active one marked.
+#[derive(Default)]
+struct LatestAccounts(Mutex<Vec<usage::Account>>);
 
 /// Wakes the usage poller for an immediate fetch.
 struct UsageTrigger(mpsc::Sender<()>);
@@ -70,32 +76,54 @@ fn refresh_usage(trigger: tauri::State<UsageTrigger>) -> Result<(), String> {
     trigger.0.send(()).map_err(|_| "O monitor de limites parou".to_string())
 }
 
+#[tauri::command]
+fn get_accounts(latest: tauri::State<LatestAccounts>) -> Vec<usage::Account> {
+    latest.0.lock().map(|accounts| accounts.clone()).unwrap_or_default()
+}
+
+/// Picks the account new agents and the scout run on; the bars on the map follow it.
+#[tauri::command]
+fn set_claude_account(dir: String, trigger: tauri::State<UsageTrigger>) -> Result<(), String> {
+    // Only an account we listed ourselves: the UI never hands us a folder to run claude from.
+    if !usage::accounts(None).iter().any(|account| account.dir == dir) {
+        return Err("Essa conta do Claude não está mais nesta máquina".into());
+    }
+    onboarding::set_claude_account(dir)?;
+    trigger.0.send(()).map_err(|_| "O monitor de limites parou".to_string())
+}
+
 fn spawn_usage_watcher(app: AppHandle, wake: mpsc::Receiver<()>) {
     std::thread::spawn(move || {
         // Resets are judged between live answers only: the cached copy can be older than the last one.
-        let mut last_live: Option<usage::Usage> = None;
+        let mut last_live: HashMap<String, usage::Usage> = HashMap::new();
         loop {
+            let config = onboarding::Config::load();
             // Opt-in at first run: it is the one call that leaves this machine.
-            let is_usage_on = onboarding::Config::load().is_usage_on;
-            if !is_usage_on {
-                last_live = None;
+            if !config.is_usage_on {
+                last_live.clear();
             }
-            if let Some(usage) = is_usage_on.then(|| usage::current_usage(last_live.as_ref())).flatten() {
+            let mut accounts = usage::accounts(config.claude_account.as_deref());
+            if config.is_usage_on {
+                for account in &mut accounts {
+                    account.usage = usage::current_usage(std::path::Path::new(&account.dir), last_live.get(&account.dir));
+                }
+            }
+            watch_limits(&app, &accounts, &mut last_live);
+            if let Some(usage) = accounts.iter().find(|account| account.is_active).and_then(|account| account.usage.clone()) {
                 if let Ok(mut latest) = app.state::<LatestUsage>().0.lock() {
                     *latest = Some(usage.clone());
                 }
                 if let Err(err) = app.emit(USAGE_EVENT, &usage) {
                     eprintln!("[usage] failed to emit: {err}");
                 }
-                if !usage.is_stale {
-                    announce_limit_alert(&app, usage::newly_alarming(last_live.as_ref(), &usage));
-                    if let Some(previous) = &last_live {
-                        announce_limit_reset(&app, usage::reset_since(previous, &usage));
-                    }
-                    last_live = Some(usage);
-                }
             }
-            let wait = last_live.as_ref().and_then(usage::until_next_reset).map_or(USAGE_POLL_INTERVAL, |until| until.min(USAGE_POLL_INTERVAL));
+            if let Ok(mut latest) = app.state::<LatestAccounts>().0.lock() {
+                *latest = accounts.clone();
+            }
+            if let Err(err) = app.emit(ACCOUNTS_EVENT, &accounts) {
+                eprintln!("[usage] failed to emit the accounts: {err}");
+            }
+            let wait = last_live.values().filter_map(usage::until_next_reset).min().map_or(USAGE_POLL_INTERVAL, |until| until.min(USAGE_POLL_INTERVAL));
             if let Err(RecvTimeoutError::Disconnected) = wake.recv_timeout(wait) {
                 return;
             }
@@ -103,28 +131,56 @@ fn spawn_usage_watcher(app: AppHandle, wake: mpsc::Receiver<()>) {
     });
 }
 
+/// Alerts and resets of each account's fresh answer. With several accounts each one is named, a
+/// reset off the active one carries its name on the limits, and the active one running out points
+/// to an account with room.
+fn watch_limits(app: &AppHandle, accounts: &[usage::Account], last_live: &mut HashMap<String, usage::Usage>) {
+    let is_several = accounts.len() > 1;
+    let spare = accounts.iter().find(|account| !account.is_active && account.usage.as_ref().is_some_and(usage::Usage::has_room));
+    for account in accounts {
+        let Some(usage) = account.usage.as_ref().filter(|usage| !usage.is_stale) else { continue };
+        let name = is_several.then_some(account.name.as_str());
+        let previous = last_live.get(&account.dir);
+        let switch_to = spare.filter(|_| account.is_active).map(|spare| spare.name.as_str());
+        announce_limit_alert(app, name, usage::newly_alarming(previous, usage), switch_to);
+        if let Some(previous) = previous {
+            let mut limits = usage::reset_since(previous, usage);
+            if is_several && !account.is_active {
+                limits.iter_mut().for_each(|limit| limit.label = format!("{} · {}", account.name, limit.label));
+            }
+            announce_limit_reset(app, name, limits);
+        }
+        last_live.insert(account.dir.clone(), usage.clone());
+    }
+}
+
 /// A limit past usage::ALERT_PERCENT: one notification per crossing, since the map may be in the
 /// tray; the red banner over the bars stays until it resets.
-fn announce_limit_alert(app: &AppHandle, limits: Vec<usage::Limit>) {
+fn announce_limit_alert(app: &AppHandle, account: Option<&str>, limits: Vec<usage::Limit>, switch_to: Option<&str>) {
     if limits.is_empty() {
         return;
     }
     let now = usage::now_ms();
-    let summary: Vec<String> = limits.iter().map(|limit| usage::describe_pressure(limit, now)).collect();
+    let mut body: Vec<String> = limits.iter().map(|limit| usage::describe_pressure(limit, now)).collect();
+    if let Some(spare) = switch_to {
+        body.push(format!("A conta {spare} tem folga: troque no painel para os próximos agentes."));
+    }
     let title = if limits.iter().any(|limit| limit.percent >= 100.0) { "Limite do Claude esgotado" } else { "Limite do Claude quase no fim" };
+    let title = account.map_or_else(|| title.to_string(), |name| format!("{title} · {name}"));
     let opener = app.clone();
-    notify::send(title, &summary.join("\n"), move || show_main_window(&opener));
+    notify::send(&title, &body.join("\n"), move || show_main_window(&opener));
 }
 
 /// A pressing limit reset: a desktop notification now, and the fanfare once the map is in view.
-fn announce_limit_reset(app: &AppHandle, limits: Vec<usage::Limit>) {
+fn announce_limit_reset(app: &AppHandle, account: Option<&str>, limits: Vec<usage::Limit>) {
     if limits.is_empty() {
         return;
     }
     let summary: Vec<String> = limits.iter().map(|limit| format!("{}: {}% usado", limit.label, limit.percent.round())).collect();
     let body = format!("{}\nOs aldeões podem voltar ao trabalho.", summary.join(" · "));
+    let title = account.map_or_else(|| "Limite do Claude reiniciado".to_string(), |name| format!("Limite do Claude reiniciado · {name}"));
     let opener = app.clone();
-    notify::send("Limite do Claude reiniciado", &body, move || show_main_window(&opener));
+    notify::send(&title, &body, move || show_main_window(&opener));
     if let Ok(mut pending) = app.state::<PendingLimitReset>().0.lock() {
         pending.extend(limits);
     }
@@ -596,14 +652,15 @@ fn main() {
         .manage(LatestSnapshot::default())
         .manage(RefreshTrigger(refresh_tx))
         .manage(LatestUsage::default())
+        .manage(LatestAccounts::default())
         .manage(UsageTrigger(usage_tx))
         .manage(PendingLimitReset::default())
         .manage(music::Music::default())
         .invoke_handler(tauri::generate_handler![
-            play_sound, set_music, set_music_volume, set_music_station, skip_music_track, get_music_track, get_snapshot, refresh_snapshot, open_session, get_approvals, resolve_approval, set_auto_approve, get_auto_approve, list_projects, project_preview, get_empire, deploy_agent, end_session, get_usage, refresh_usage,
+            play_sound, set_music, set_music_volume, set_music_station, skip_music_track, get_music_track, get_snapshot, refresh_snapshot, open_session, get_approvals, resolve_approval, set_auto_approve, get_auto_approve, list_projects, project_preview, get_empire, deploy_agent, end_session, get_usage, refresh_usage, get_accounts, set_claude_account,
             get_hosted, send_to_agent, move_to_cursor, list_sessions, resume_session, editor_folders,
             onboarding::get_config, onboarding::get_setup, onboarding::set_projects_root, onboarding::add_repo, onboarding::finish_setup, onboarding::set_usage_on,
-            scout::get_scout, scout::list_scout_skills, scout::read_scout_skill, scout::save_scout_skill, scout::list_scout_connectors, scout::list_scout_extra_connectors, scout::run_routine, scout::scout_prompt, scout::set_scout_equipment, scout::set_scout_village, scout::start_scout, scout::set_mission_status,
+            scout::get_scout, scout::list_scout_skills, scout::read_scout_skill, scout::save_scout_skill, scout::list_scout_connectors, scout::list_scout_extra_connectors, scout::run_routine, scout::scout_prompt, scout::set_scout_equipment, scout::set_scout_hidden, scout::set_scout_village, scout::start_scout, scout::set_mission_status,
             scout::open_mission_source, phone::get_phone, phone::set_phone, phone::reset_phone_token,
             phone::set_phone_public_url, phone::set_phone_token_lifetime])
         .setup(|app| {

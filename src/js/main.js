@@ -51,8 +51,10 @@ const DEFAULT_MUSIC_VOLUME = 100;
 const DISMISSED_KEY = 'cpo.dismissed';
 const COLLAPSED_KEY = 'cpo.collapsedProjects';
 const LIMITS_PREF_KEY = 'cpo.limits';
+const SETTINGS_SECTION_KEY = 'cpo.settingsSection';
 // Same as usage::ALERT_PERCENT in the backend, which sends the matching desktop notification.
 const LIMIT_ALERT_PERCENT = 90;
+const STALE_NOTE_MS = 5 * 60 * 1000;
 const ZOOM_PREF_KEY = 'cpo.zoom';
 const ZOOM_STEPS = [0.75, 0.85, 0.9, 1, 1.1, 1.25, 1.4, 1.6];
 const VIEW_ZOOM_KEY = 'cpo.viewZoom';
@@ -92,6 +94,7 @@ let isMusicOn = readPref(MUSIC_PREF_KEY, true);
 let dismissed = new Set(readDismissed());
 let collapsedProjects = new Set(readList(COLLAPSED_KEY));
 let usage = null;
+let accounts = []; // the Claude accounts on this machine, with plan and limits; one is active
 let isLimitsOn = readPref(LIMITS_PREF_KEY, true);
 const limitsEl = document.getElementById('limits');
 const limitsToggle = document.getElementById('limits-toggle');
@@ -157,6 +160,12 @@ const deployDialog = createDeployDialog({
     showToast(`${project.name}: base fixa no mapa`);
   },
   openMenu: (anchor, title, items, opener) => actionMenu.open(anchor, title, items, opener),
+  describeAccount: (mode) => {
+    if (accounts.length < 2) return '';
+    if (mode === 'cursor') return 'A conta do Claude é a logada na extensão do Cursor.';
+    const active = accounts.find((account) => account.isActive);
+    return active ? `Conta do Claude: ${active.name}.` : '';
+  },
 });
 
 scoutPanel = createScout({
@@ -216,6 +225,10 @@ const overview = createOverview({
   getAchievements: () => progress.achievements(),
   getEvents: () => progress.events(),
   getUsage: () => progress.usage(),
+  getAccounts: () => accounts,
+  onPickAccount: (account) => pickAccount(account),
+  formatReset: (resetsAt) => formatReset(resetsAt),
+  limitSeverity: (limit) => limitSeverity(limit),
   onOpen: () => progress.overviewOpened(),
 });
 
@@ -375,7 +388,7 @@ function deployToRepo(project, text, mode) {
 const baseCard = createBaseCard({
   describe: (project) => {
     const design = empire.designOf(project);
-    const crew = agents.filter((agent) => !isObserver(agent) && agent.project === project).sort(compareAgents);
+    const crew = agents.filter((agent) => !isObserver(agent) && empire.homeOf(agent.project) === project).sort(compareAgents);
     const era = ERAS.find((e) => e.id === design.era)?.name;
     const style = TOWN_STYLES.find((s) => s.id === design.style)?.name;
     const folder = empire.displayName(project) === project ? null : `pasta ${project}`;
@@ -634,7 +647,8 @@ function renderCard(agent) {
   const meta = [where, fileCount, shortModel(agent.model), host, `pid ${agent.pid}`];
   main.append(el('span', 'card-meta', meta.filter(Boolean).join(' · ')));
 
-  button.append(el('span', 'swatch'), main);
+  // Scouts ride horses on the map, not villagers: they keep the plain team swatch.
+  button.append(isObserver(agent) ? el('span', 'swatch') : cardPortrait(agent), main);
   const more = el('button', 'card-more', '…');
   more.type = 'button';
   more.setAttribute('aria-label', `Ações de ${agent.name}`);
@@ -855,7 +869,7 @@ function readCommandVillage() {
 
 // The bases on the map, the busiest first: where a new agent can start.
 function commandVillages() {
-  const crewSize = (project) => rawAgents.filter((a) => !isObserver(a) && a.project === project).length;
+  const crewSize = (project) => rawAgents.filter((a) => !isObserver(a) && empire.homeOf(a.project) === project).length;
   return [...empire.bases.keys()].sort((a, b) => crewSize(b) - crewSize(a) || empire.displayName(a).localeCompare(empire.displayName(b)));
 }
 
@@ -883,9 +897,25 @@ function renderCommandPortrait(agent, village) {
   const look = makeLook(agent?.id ?? 'novo aldeão', project ?? '');
   if (project) empire.dressInTeam(look, project);
   else Object.assign(look, RECRUIT_CLOTH, { shirt: RECRUIT_CLOTH.tunic });
-  const ctx = commandPortrait.getContext('2d');
-  ctx.clearRect(0, 0, commandPortrait.width, commandPortrait.height);
-  drawVillager(ctx, look, commandPortrait.width / 2, 18, 's', 'stand', 0, 0); // feet below the frame: head and chest
+  paintBust(commandPortrait, look);
+}
+
+function paintBust(canvas, look) {
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawVillager(ctx, look, canvas.width / 2, 18, 's', 'stand', 0, 0); // feet below the frame: head and chest
+}
+
+// The card's villager, dressed as on the map: its own face and hair, its base's team color.
+function cardPortrait(agent) {
+  const project = empire.workProjectOf(agent);
+  const look = makeLook(agent.id, project);
+  empire.dressInTeam(look, project);
+  const canvas = el('canvas', 'unit-portrait card-portrait');
+  [canvas.width, canvas.height] = [12, 13];
+  canvas.setAttribute('aria-hidden', 'true');
+  paintBust(canvas, look);
+  return canvas;
 }
 
 function commandPlaceholder() {
@@ -931,7 +961,7 @@ function openCommandTargetMenu() {
   }
   items.push({ section: 'Novo agente em' });
   for (const project of commandVillages()) {
-    const crew = rawAgents.filter((a) => !isObserver(a) && a.project === project);
+    const crew = rawAgents.filter((a) => !isObserver(a) && empire.homeOf(a.project) === project);
     items.push({ label: empire.displayName(project), hint: statusSummary(crew) || quietSummary(project), onSelect: () => chooseCommandVillage(project) });
   }
   items.push({ label: 'Outro repositório…', hint: 'Busca em ~/Code, já com a tarefa escrita', onSelect: handOffToDialog });
@@ -1314,7 +1344,7 @@ function crewFor(id) {
 }
 
 function baseHint(project) {
-  const crew = rawAgents.filter((agent) => !isObserver(agent) && agent.project === project);
+  const crew = rawAgents.filter((agent) => !isObserver(agent) && empire.homeOf(agent.project) === project);
   const folder = empire.displayName(project) === project ? '' : `pasta ${project} · `;
   return `${folder}${statusSummary(crew) || quietSummary(project)}`;
 }
@@ -1538,7 +1568,7 @@ function openOrder(ids, project) {
   if (crew.length === 0) return;
   order = { ids: crew.map((a) => a.id), project };
   const isCrew = crew.length > 1; // several picked: each one gets its own task under its name
-  const isHome = crew.every((a) => a.project === project);
+  const isHome = crew.every((a) => empire.homeOf(a.project) === project);
   const isAllRecruits = crew.every((a) => a.isRecruit);
   const path = empire.repoPathOf(project);
   document.getElementById('order-title').textContent = `Mandar para ${project}`;
@@ -1847,7 +1877,11 @@ function saveLayout(layout) {
 // Settings › Bases no mapa: pinned and hidden repositories, plus the ones with agents right now.
 function renderBaseList() {
   const crews = new Map();
-  for (const agent of rawAgents) if (!isObserver(agent)) crews.set(agent.project, (crews.get(agent.project) ?? 0) + 1);
+  for (const agent of rawAgents) {
+    if (isObserver(agent)) continue;
+    const home = empire.homeOf(agent.project);
+    crews.set(home, (crews.get(home) ?? 0) + 1);
+  }
   const { pinned, hidden } = empire.getLayout();
   const projects = [...new Set([...Object.keys(pinned), ...hidden, ...crews.keys()])].sort((a, b) => a.localeCompare(b));
   const rows = projects.map((project) => {
@@ -2124,6 +2158,11 @@ function renderPanel() {
   emptyEl.hidden = agents.length > 0;
 }
 
+// "em 34min" within a day, "dom 04:00" beyond: the reset at the end of a bar's line.
+function formatResetShort(resetsAt, now = Date.now()) {
+  return formatReset(resetsAt, now).replace(/^reinicia /, '').replace(/ \(\d\d:\d\d\)$/, '');
+}
+
 // "reinicia em 34min (22:00)" within a day, "reinicia dom 04:00" beyond, in local time.
 function formatReset(resetsAt, now = Date.now()) {
   if (!Number.isFinite(resetsAt)) return '';
@@ -2189,16 +2228,66 @@ function renderLimitAlert(limits) {
     }
     alert.append(line);
   }
+  const spare = accounts.find((account) => !account.isActive && account.usage?.limits.every((limit) => !isLimitAlarming(limit)));
+  if (spare) {
+    const button = el('button', 'link-button limit-alert-switch', `Usar a conta ${spare.name} nos próximos agentes`);
+    button.type = 'button';
+    button.addEventListener('click', () => pickAccount(spare));
+    alert.append(button);
+  }
   return alert;
+}
+
+// With several Claude accounts, one button each above the bars, with its fullest limit: a click
+// picks the account new agents and the scout run on, and the bars follow it.
+function renderAccountSwitch() {
+  const group = el('div', 'account-switch');
+  group.setAttribute('role', 'group');
+  group.setAttribute('aria-label', 'Conta do Claude dos novos agentes');
+  for (const account of accounts) {
+    const button = el('button', 'account-chip');
+    button.type = 'button';
+    button.setAttribute('aria-pressed', String(account.isActive));
+    button.title = account.isActive ? `${account.folder}: novos agentes e o Batedor usam esta conta` : `${account.folder}: usar esta conta nos próximos agentes`;
+    button.append(el('span', 'account-chip-name', account.name));
+    const fullest = isLimitsOn ? account.usage?.limits.reduce((top, limit) => (limit.percent > (top?.percent ?? -1) ? limit : top), null) : null;
+    if (fullest) {
+      const percent = el('span', 'account-chip-percent', `${Math.round(fullest.percent)}%`);
+      percent.dataset.severity = limitSeverity(fullest);
+      button.append(percent);
+    }
+    if (!account.isActive) button.addEventListener('click', () => pickAccount(account));
+    group.append(button);
+  }
+  return group;
+}
+
+async function pickAccount(account) {
+  try {
+    await window.__TAURI__.core.invoke('set_claude_account', { dir: account.dir });
+  } catch (err) {
+    showToast(String(err), true);
+    return;
+  }
+  usage = account.usage ?? null; // the bars switch now; the poll confirms in a moment
+  applyAccounts(accounts.map((other) => ({ ...other, isActive: other.dir === account.dir })));
+  showToast(`Novos agentes e o Batedor agora usam a conta ${account.name}`);
+}
+
+function applyAccounts(next) {
+  accounts = next ?? [];
+  renderLimits();
+  if (overview.isOpen()) overview.renderAccounts();
 }
 
 function renderLimits() {
   renderSpend(); // the balloons split the session bar: they follow it
-  const limits = usage?.limits ?? [];
-  limitsEl.hidden = !isLimitsOn || limits.length === 0;
+  const limits = isLimitsOn ? (usage?.limits ?? []) : [];
+  const isSwitchShown = accounts.length > 1;
+  limitsEl.hidden = limits.length === 0 && !isSwitchShown;
   if (limitsEl.hidden) return;
-  const fetchedAt = new Date(usage.fetchedAt);
-  limitsEl.title = `Atualizado às ${String(fetchedAt.getHours()).padStart(2, '0')}:${String(fetchedAt.getMinutes()).padStart(2, '0')}, a cada 1 min`;
+  const fetchedAt = new Date(usage?.fetchedAt);
+  limitsEl.title = limits.length ? `Atualizado às ${String(fetchedAt.getHours()).padStart(2, '0')}:${String(fetchedAt.getMinutes()).padStart(2, '0')}, a cada 1 min` : '';
   const rows = limits.map((limit) => {
     const row = el('div', 'limit');
     row.dataset.severity = limitSeverity(limit);
@@ -2207,12 +2296,19 @@ function renderLimits() {
     const fill = el('span', 'limit-fill');
     fill.style.width = `${Math.min(100, Math.max(0, limit.percent))}%`;
     bar.append(fill);
-    const reset = el('span', 'limit-reset', formatReset(limit.resetsAt));
+    row.title = [limit.label, `${Math.round(limit.percent)}%`, formatReset(limit.resetsAt)].filter(Boolean).join(' · ');
+    const reset = el('span', 'limit-reset', formatResetShort(limit.resetsAt));
     if (Number.isFinite(limit.resetsAt)) reset.dataset.resets = String(limit.resetsAt);
     row.append(el('span', 'limit-label', limit.label), bar, el('strong', 'limit-percent', `${Math.round(limit.percent)}%`), reset);
     return row;
   });
-  if (usage.isStale) rows.push(el('p', 'limit-stale', `Sem conexão: dados de ${formatElapsed(usage.fetchedAt)} atrás`));
+  // One failed fetch is no news; a reading that stays old is.
+  if (limits.length && usage.isStale && Date.now() - usage.fetchedAt > STALE_NOTE_MS) {
+    const stale = el('p', 'limit-stale', `Dados de ${formatElapsed(usage.fetchedAt)} atrás`);
+    stale.title = 'A API não respondeu: sem conexão, ou o token da conta venceu (ele renova quando o Claude Code roda nela)';
+    rows.push(stale);
+  }
+  if (isSwitchShown) rows.unshift(renderAccountSwitch());
   const alarming = limits.filter((limit) => isLimitAlarming(limit));
   if (alarming.length) rows.unshift(renderLimitAlert(alarming));
   limitsEl.replaceChildren(...rows);
@@ -2315,7 +2411,7 @@ function showTooltip(hit) {
     return;
   }
   if (hit?.project) {
-    const members = agents.filter((a) => a.project === hit.project);
+    const members = agents.filter((a) => empire.homeOf(a.project) === hit.project);
     const name = empire.displayName(hit.project);
     placeTooltip(hit, [
       ['strong', name],
@@ -2627,8 +2723,48 @@ function setSettingsOpen(isOpen) {
   settingsBackdrop.hidden = !isOpen;
   settingsOpenButton.setAttribute('aria-expanded', String(isOpen));
   if (isOpen) renderBaseList();
-  if (isOpen) settingsEl.querySelector('input')?.focus();
+  if (isOpen) renderSettingsSummaries();
+  if (isOpen) (settingsEl.querySelector('details[open] input') ?? settingsEl.querySelector('summary'))?.focus();
   else settingsOpenButton.focus();
+}
+
+// Each section of Configurações folds to one line saying what is picked in it.
+function renderSettingsSummaries() {
+  const picked = (name) => settingsEl.querySelector(`input[name="${name}"]:checked`)?.closest('label').querySelector('strong').textContent.replace(' (padrão)', '');
+  const isOn = (id) => document.getElementById(id).checked;
+  const text = (id) => document.getElementById(id).textContent;
+  const station = document.getElementById('music-station');
+  const bases = document.querySelectorAll('#base-list > .base-row').length;
+  const summaries = {
+    map: [picked('map-view'), picked('map-border'), isOn('simple-toggle') && 'simplificado', !isOn('scout-toggle') && 'sem batedor'],
+    panel: [picked('panel-side'), `zoom ${text('zoom-value')}`, isOn('group-toggle') && 'por projeto', isOn('limits-toggle') && 'limites'],
+    sound: [isOn('sound-toggle') ? 'avisos' : 'sem avisos', isOn('music-toggle') ? `${station.selectedOptions[0]?.textContent} ${text('music-volume-value')}` : 'sem trilha'],
+    bases: [`${bases} ${bases === 1 ? 'base' : 'bases'}`],
+  };
+  for (const [section, parts] of Object.entries(summaries)) {
+    settingsEl.querySelector(`[data-section="${section}"] .settings-group-summary`).textContent = parts.filter(Boolean).join(' · ');
+  }
+}
+
+// After the control's own handler has updated its value (zoom and volume read from their outputs).
+for (const type of ['change', 'input', 'click']) settingsEl.addEventListener(type, () => queueMicrotask(renderSettingsSummaries));
+
+// One section open at a time (details name=…), and the last one opened comes back next time.
+try {
+  const saved = localStorage.getItem(SETTINGS_SECTION_KEY);
+  if (saved) settingsEl.querySelector(`details[data-section="${CSS.escape(saved)}"]`)?.setAttribute('open', '');
+} catch {
+  // storage blocked: every section starts folded
+}
+for (const section of settingsEl.querySelectorAll('details[data-section]')) {
+  section.addEventListener('toggle', () => {
+    const open = settingsEl.querySelector('details[data-section][open]');
+    try {
+      localStorage.setItem(SETTINGS_SECTION_KEY, open?.dataset.section ?? '');
+    } catch {
+      // storage blocked: not remembered
+    }
+  });
 }
 
 document.getElementById('onboarding-open').addEventListener('click', () => {
@@ -3011,7 +3147,10 @@ setInterval(() => {
   for (const span of listEl.querySelectorAll('[data-since]')) span.textContent = formatElapsed(Number(span.dataset.since), now);
   for (const span of tasksList.querySelectorAll('[data-since]')) span.textContent = formatElapsed(Number(span.dataset.since), now);
   for (const span of approvalsEl.querySelectorAll('[data-expires]')) span.textContent = approvalTimer(Number(span.dataset.expires), now);
-  for (const span of limitsEl.querySelectorAll('[data-resets]')) span.textContent = formatReset(Number(span.dataset.resets), now);
+  for (const span of limitsEl.querySelectorAll('[data-resets]')) {
+    const resetsAt = Number(span.dataset.resets);
+    span.textContent = span.classList.contains('limit-reset') ? formatResetShort(resetsAt, now) : formatReset(resetsAt, now);
+  }
   renderAutoApprove(now);
   renderClock();
 }, 1000);
@@ -3062,6 +3201,7 @@ async function start() {
     renderAutoApprove();
   });
   await tauri.event.listen('usage', (event) => applyUsage(event.payload));
+  await tauri.event.listen('accounts', (event) => applyAccounts(event.payload));
   await tauri.event.listen('limit_reset', (event) => celebrateLimitReset(event.payload));
   await tauri.event.listen('music_track', (event) => {
     if (isMusicOn) showMusicTrack(event.payload);
@@ -3093,6 +3233,7 @@ async function start() {
   autoApproveUntil = (await tauri.core.invoke('get_auto_approve')) ?? null;
   renderAutoApprove();
   applyUsage(await tauri.core.invoke('get_usage'));
+  applyAccounts(await tauri.core.invoke('get_accounts'));
   scoutPanel.apply(await tauri.core.invoke('get_scout'));
   scoutPanel.syncVillage();
   const config = await tauri.core.invoke('get_config');

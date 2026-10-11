@@ -49,6 +49,10 @@ class ApiError extends Error {
   }
 }
 
+// The app never redirects: one means the login in front of the internet address (Cloudflare Access)
+// wants us to sign in again. Reloading the page goes through it; the code stays in localStorage.
+class LoginNeeded extends Error {}
+
 function readToken() {
   try {
     return localStorage.getItem(TOKEN_KEY);
@@ -82,7 +86,11 @@ async function api(path, body) {
     headers: { Authorization: `Bearer ${token}`, ...(isPost ? { 'Content-Type': 'application/json' } : {}) },
     body: isPost ? JSON.stringify(body) : undefined,
     cache: 'no-store',
+    redirect: 'manual',
   });
+  if (response.type === 'opaqueredirect') {
+    throw new LoginNeeded('O login do endereço na internet expirou: recarregue a página para entrar de novo');
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new ApiError(data.error ?? `Erro ${response.status}`, response.status);
   return data;
@@ -147,6 +155,11 @@ async function poll() {
       token = null;
       saveToken(null);
       showPairing('O código deste celular foi trocado ou o acesso foi desligado no computador. Escaneie o QR code de novo no painel Celular.');
+      return;
+    }
+    // A half-written reply or task is worth more than the reload: it waits until the dialog closes.
+    if (err instanceof LoginNeeded && !replyDialog.open && !newDialog.open) {
+      location.reload();
       return;
     }
     setLive(false);

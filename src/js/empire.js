@@ -1547,8 +1547,13 @@ export class Empire {
     const order = this.orders.get(agent.id);
     const since = Math.max(agent.lastPromptAt ?? 0, order?.at ?? 0);
     const latest = agent.files?.[0];
-    if (latest && Number.isFinite(latest.at) && latest.at >= since) return projectOfPath(latest.path, this.repoPaths) ?? agent.project;
-    return order?.project ?? agent.project;
+    if (latest && Number.isFinite(latest.at) && latest.at >= since) return this.homeOf(projectOfPath(latest.path, this.repoPaths) ?? agent.project);
+    return this.homeOf(order?.project ?? agent.project);
+  }
+
+  /** A folder's base: a worktree is a branch of its repository, not a base of its own. */
+  homeOf(project) {
+    return this.repoCheckouts.get(project)?.worktreeOf ?? project;
   }
 
   /** Sends these agents' villagers to work at another repository's base (the order itself goes out elsewhere). */
@@ -1557,7 +1562,7 @@ export class Empire {
     for (const id of ids) {
       const agent = this.lastAgents.find((a) => a.id === id);
       if (!agent || isObserver(agent)) continue;
-      if (project === agent.project) this.orders.delete(id); // back home
+      if (project === this.homeOf(agent.project)) this.orders.delete(id); // back home
       else this.orders.set(id, { project, at });
     }
     if (this.hidden.has(project)) this.hidden.delete(project);
@@ -1720,9 +1725,14 @@ export class Empire {
    * The scout's state from its panel: { level, isScouting, missions: Map(project -> { count, isUrgent }) }.
    * It rides off by the main road while it reads, and back in when the round ends.
    */
-  setScout({ level, isScouting, missions }) {
+  setScout({ level, isScouting, missions, isHidden }) {
     const wasScouting = this.scout.isScouting;
-    this.scout = { level, isScouting, missions };
+    // Hidden by the user: no knight and no parchments over the bases.
+    this.scout = { level, isScouting, missions: isHidden ? new Map() : missions };
+    if (isHidden) {
+      this.chars.delete(KNIGHT_ID);
+      return;
+    }
     const ch = this.chars.get(KNIGHT_ID) ?? this.addKnight();
     ch.look.tunic = S.KNIGHT_ARMOR[S.knightTier(level)].base; // the 3D view dresses it again when this changes
     const now = performance.now();

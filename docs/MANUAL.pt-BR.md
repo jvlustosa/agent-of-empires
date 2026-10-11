@@ -33,6 +33,8 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   linha diz também de qual repositório (`feature-x · worktree de site`). Na main, nada aparece. O
   card do Centro da Cidade mostra sempre a branch, até a main. Ela vem do `.git/HEAD` da pasta (sem
   rodar git), relido a cada minuto e na hora em que um aldeão troca de branch.
+- **Worktree não vira base**: uma worktree (outra pasta com uma branch do mesmo repositório) não
+  ganha prédio. Quem trabalha nela aparece na base do repositório de origem, com a branch no rótulo.
 - **Suas bases**: os repositórios principais ficam **fixos** no mapa, no lugar que você escolheu,
   mesmo sem agentes (salvo entre sessões). Repositório não fixo tem base temporária, que some quando
   o último agente sai.
@@ -155,10 +157,15 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     tokens da semana em destaque. Logo abaixo, **Tokens e custo** dos últimos 30 dias: quanto o uso
     custaria pago por requisição na API do Claude (preço de lista de cada modelo, com entrada, saída,
     escrita de cache de 5 min e de 1 h e leitura de cache), o preço de tabela da sua assinatura (Pro
-    US$ 20, Max 5x US$ 100, Max 20x US$ 200 por mês, lido das credenciais do Claude Code) e a
-    diferença, o que a assinatura subsidia, com uma barra "você paga / subsidiado" e o gráfico diário
-    de tokens e de custo. Conta só as sessões nos repositórios da pasta de repositórios, então o
-    custo real é no mínimo esse. Plano Team ou Enterprise (ou sem login) mostra só o custo em API.
+    US$ 20, Max 5x US$ 100, Max 20x US$ 200, assento Team Standard US$ 25 e Team Premium US$ 125 por
+    mês, lido das credenciais do Claude Code) e a diferença, o que a assinatura subsidia, com uma
+    barra "você paga / subsidiado" e o gráfico diário de tokens e de custo. Conta só as sessões nos
+    repositórios da pasta de repositórios, então o custo real é no mínimo esse. Com duas contas em
+    perfis separados (`CLAUDE_CONFIG_DIR`, por exemplo `~/.claude-pessoal`) cuja pasta `projects` é
+    link para a mesma, as sessões das duas entram no custo e as assinaturas são somadas. Plano
+    Enterprise (ou sem login) mostra só o custo em API. Logo abaixo, **Contas Claude**: uma linha
+    por conta com plano, preço, sessão e semana (com quando reiniciam), a ativa marcada e "Usar" nas
+    outras.
     Depois, cada base com emblema, era e estilo, os cinco recursos e quando foi fundada (primeiro
     commit); "Ver no mapa" acende a base, "Pôr no mapa" fixa uma base explorada que não está no mapa.
   - **Névoa de guerra**: repositórios da pasta de repositórios (escolhida na primeira execução; `~/Code` por padrão) onde nenhum agente trabalhou ficam como ruínas
@@ -242,6 +249,9 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     tempo e a última coisa que ele disse; no mapa, o aldeão fica no cercado de espera, ao lado do
     Centro da Cidade, acenando, com anel âmbar no chão e uma etiqueta de quanto tempo espera.
   - **Trabalhando**: nada a fazer por você.
+  - Cada card traz o **retrato do aldeão** daquela sessão (cabeça e peito em pixel art, como no
+    retrato da barra de comando), com o rosto, o cabelo e o chapéu dele e a túnica e a moldura na
+    cor do time da base onde trabalha. O batedor do claude-mem fica com o quadradinho de cor.
   - **Emotes**, como os do Ragnarok: quando algo acontece com um aldeão, um emote animado salta
     sobre a cabeça dele: **/!** pede aprovação (ele dá um pulo de susto), **/?** fez uma pergunta,
     **/ho ♪** terminou e é a sua vez, **GG** terminou uma tarefa de mais de 10 min (pula duas
@@ -436,10 +446,11 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
   - **Encerrar sessão**: SIGTERM no processo do Claude (salva o transcript e sai), com
     confirmação em dois cliques. Só sinaliza PIDs registrados como sessão, com início conferido.
   - Mesmo formato do menu da base: ícone e nome, explicação no pé.
-- **Limites do plano**: barras de uso da sessão (janela de 5 h) e da semana, com quando reiniciam
-  (no fuso da máquina). Só com a opção ligada (na primeira execução ou nas Configurações), buscados a cada 1 min no mesmo endpoint do `/usage` do Claude Code, com o
+- **Limites do plano**: barras de uso da sessão (janela de 5 h) e da semana, uma linha cada, com
+  quando reiniciam no fim da linha ("em 2h54" ou "dom 04:00", no fuso da máquina; o mouse sobre a
+  barra mostra o horário completo). Só com a opção ligada (na primeira execução ou nas Configurações), buscados a cada 1 min no mesmo endpoint do `/usage` do Claude Code, com o
   token dele (só leitura, via stdin do curl); sem rede, mantém a última leitura (ou a cópia de
-  `~/.claude.json`, se for mais nova) e avisa a idade. O mouse sobre as barras mostra a hora da leitura.
+  `~/.claude.json`, se for mais nova) e, se ela passar de 5 min, avisa a idade. O mouse sobre as barras mostra a hora da leitura.
   - **Limite quase no fim**: a partir de 90%, a barra fica vermelha e uma faixa vermelha aparece
     acima das barras com o limite, o percentual e quando reinicia; os balões dos Centros da Cidade
     também ficam vermelhos. Ao cruzar os 90% chega uma notificação do sistema (uma por janela de
@@ -449,7 +460,20 @@ Claude Code abertas nesta máquina, em que repositório cada uma está e o que e
     de reinício, sem esperar a próxima busca. Ao abrir o app (ou voltar para a janela), uma corneta toca a
     carga, um aviso aparece e as barras reiniciadas brilham em dourado. A corneta segue o "Som quando
     um Claude para".
-- **Configurações** (engrenagem no topo do painel, abre uma aba lateral):
+  - **Várias contas do Claude**: com uma segunda conta num perfil separado (`CLAUDE_CONFIG_DIR`, por
+    exemplo `~/.claude-pessoal`) cuja pasta `projects` é link para a mesma do `~/.claude`, aparece
+    um botão por conta acima das barras, com o limite mais cheio de cada uma. A conta acesa é a
+    **ativa**: as barras mostram os limites dela, e os agentes novos (aqui no app e no terminal),
+    as sessões retomadas e as rondas do Batedor rodam nela. Clicar na outra troca. No Cursor vale a
+    conta logada na extensão, e um agente que já está rodando continua na conta em que começou.
+    Quando a conta ativa passa de 90% e a outra tem folga, a faixa vermelha e a notificação sugerem
+    a troca, com o botão "Usar a conta …". Cada conta tem o próprio aviso de limite e de reinício,
+    com o nome dela. O app lê os limites das duas, mas o token de uma conta só renova quando o
+    Claude Code roda nela: parada há horas, ela mostra a última leitura e a idade.
+- **Configurações** (engrenagem no topo do painel, abre uma aba lateral): quatro seções recolhíveis,
+  **Mapa** (vista, mapa simplificado, borda), **Painel** (lado, zoom, agrupar, limites), **Som** e
+  **Bases no mapa**. Fechada, cada seção mostra numa linha o que está escolhido nela (por exemplo
+  "3D isométrico · Muralha"); só uma fica aberta por vez, e a última aberta volta na próxima vez.
   - **Agrupar por projeto**: a lista ganha seções por projeto (no mapa cada repositório já é uma base).
   - **Mostrar limites do Claude**: desligar também para a consulta à API, a única chamada de rede do app.
   - **Som quando um Claude para** (ligado por padrão): harpa subindo e acorde de sino ao terminar o
@@ -553,6 +577,9 @@ com que você o equipa e traz **missões** para as bases. Ele não é uma sessã
   agentes, das urgentes para as baixas, com **Treinar em <base>** (abre o Novo agente com a tarefa
   preenchida) e **Descartar**. **Ir até ele** leva a câmera até o cavaleiro. Clicar em **Sugestões (N)**
   recolhe ou mostra a lista (▾/▸), e o app lembra a escolha.
+- **Ocultar**: **Ocultar**, no topo do painel, tira o batedor do mapa, da barra de baixo e da barra
+  lateral. Para trazer de volta, ligue **Mostrar o Batedor** em Configurações › Mapa. Oculto, ele não
+  sai em ronda sozinho; missões, diário e equipamento continuam guardados.
 - **Equipar** (aba Equipamento, a janela de equipamento do Ragnarok): o cavaleiro no meio (com o
   mapa em 3D, ele aparece em 3D, a cavalo, girando devagar) e os espaços em volta. Clique num espaço para editá-lo embaixo da janela; Salvar equipamento guarda
   tudo, e fechar o painel também guarda (se algo não puder ser salvo, ele fica aberto dizendo o

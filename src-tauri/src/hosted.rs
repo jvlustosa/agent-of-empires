@@ -92,6 +92,7 @@ impl Hosted {
         }
         command.args(CLAUDE_ARGS).current_dir(cwd).env(HOSTED_ENV, "1");
         strip_editor_env(&mut command);
+        crate::usage::active_env().apply(&mut command);
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

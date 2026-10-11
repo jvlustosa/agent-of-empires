@@ -309,6 +309,8 @@ pub struct ScoutState {
     /// Newest first.
     pub journal: Vec<Deed>,
     pub xp: u32,
+    /// Taken off the map and the side panel by the user; its routines wait until it is back.
+    pub is_hidden: bool,
     #[serde(skip_deserializing)]
     pub is_scouting: bool,
     #[serde(skip_deserializing)]
@@ -603,6 +605,12 @@ pub fn set_scout_village(bases: Vec<String>) -> Result<(), String> {
     update(|state| state.village = bases).map(|_| ())
 }
 
+/// Hides it from the map and the side panel, or brings it back.
+#[tauri::command]
+pub fn set_scout_hidden(is_hidden: bool) -> Result<ScoutState, String> {
+    update(|state| state.is_hidden = is_hidden)
+}
+
 /// Sends the scout out with the village's bases (repository names); the result comes as a
 /// "scout" event. One round at a time.
 #[tauri::command]
@@ -686,7 +694,11 @@ pub fn spawn_routines(app: AppHandle) {
         }
         let now = crate::usage::now_ms();
         let (hour, weekday) = local_hour_and_weekday(now);
-        let Some(due) = current().equipment.routines.into_iter().find(|routine| is_due(routine, now, hour, weekday)) else { continue };
+        let state = current();
+        if state.is_hidden {
+            continue;
+        }
+        let Some(due) = state.equipment.routines.into_iter().find(|routine| is_due(routine, now, hour, weekday)) else { continue };
         let marked = update(|state| {
             if let Some(routine) = state.equipment.routines.iter_mut().find(|routine| routine.id == due.id) {
                 routine.last_run_at = Some(now);
@@ -1073,8 +1085,13 @@ fn scout_args(connectors: &[Connector]) -> Vec<String> {
         "-p",
         "--model",
         MODEL,
-        // Ignores the user's settings files, so no allow rule of theirs reaches the scout.
-        "--restricted",
+        // The claude.ai connectors load only with the user's settings source: `--restricted` (or no
+        // source at all) drops every one of them. Their hooks stay off, so what the scout reads never
+        // reaches a hook such as a memory plugin.
+        "--setting-sources",
+        "user",
+        "--settings",
+        r#"{"disableAllHooks":true}"#,
         "--tools",
         "",
         "--no-session-persistence",
@@ -1106,6 +1123,7 @@ fn run_claude(prompt: &str, connectors: &[Connector]) -> Result<Value, String> {
     let mut command = Command::new(&claude);
     command.args(scout_args(connectors)).current_dir(work_dir);
     strip_editor_env(&mut command);
+    crate::usage::active_env().apply(&mut command);
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

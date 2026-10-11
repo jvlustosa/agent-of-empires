@@ -152,7 +152,8 @@ Claude Code's own OAuth token. The token is read, never changed, and goes to cur
 
 The scout ("O Batedor") reads Slack, Gmail, Notion, Google Drive or Google Calendar only once you equip it with them. Each round
 is a `claude -p` that uses the connectors of your Claude account, with read tools only: built-in
-tools off, your settings files ignored (`--restricted`), write tools denied, no transcript saved.
+tools off, write tools denied, your hooks off, no transcript saved. Only your user settings load
+(`--setting-sources user`), since that is where Claude Code finds the claude.ai connectors.
 A mission keeps a short technical summary and the source links, never the messages, and never
 starts an agent by itself.
 

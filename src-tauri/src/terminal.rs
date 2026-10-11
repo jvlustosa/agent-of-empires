@@ -47,7 +47,12 @@ pub fn resume_claude(claude: &Path, cwd: &Path, session_id: &str) -> Result<Stri
 fn launch(claude: &Path, project: &Path, claude_args: Vec<OsString>) -> Result<String, String> {
     let terminal = pick_terminal(std::env::var_os("TERMINAL"), std::env::var_os("PATH"))
         .ok_or("Não achei um terminal: defina TERMINAL ou instale kitty, gnome-terminal, konsole ou alacritty")?;
-    spawn_in(&terminal, claude, project, claude_args)?;
+    // The picked Claude account goes in as `env …` before claude, so the terminal runs it as it is.
+    let (program, args) = match crate::usage::active_env().prefix().split_first() {
+        Some((env, rest)) => (PathBuf::from(env), rest.iter().cloned().chain([claude.into()]).chain(claude_args).collect()),
+        None => (claude.to_path_buf(), claude_args),
+    };
+    spawn_in(&terminal, &program, project, args)?;
     Ok(terminal.name)
 }
 

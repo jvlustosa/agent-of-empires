@@ -394,8 +394,12 @@ agente mexia na main ou numa branch própria.
   `.git/modules`, não conta). Fora da main, ou numa worktree, a placa ganha uma linha azul sob o
   nome (`feature-x · worktree de site`); na main, nada. O card do Centro da Cidade mostra sempre a
   branch, até a main. Pasta fora da contagem usa a branch do transcript das suas sessões.
-- Cada worktree continua sendo uma base própria (a base é a pasta), agora com a placa dizendo de
-  quem ela é.
+- ~~Cada worktree continua sendo uma base própria (a base é a pasta)~~. **Mudou em 2026-10-07**: uma
+  worktree não ganha prédio. Uma worktree aberta para revisar uma branch
+  (`chat-juridico-ui-review-…`) virou uma base nova no mapa, e não é isso que se quer. Agora a
+  worktree conta como a base do repositório de origem (`worktreeOf` da contagem): o aldeão que
+  edita lá, ou cuja sessão roda lá, trabalha na base de origem, e o card da base, a lista de Bases
+  no mapa e o comando contam esse agente ali. A branch continua aparecendo no rótulo do aldeão.
 - **Leve**: um arquivo de uma linha por repositório, na contagem que já roda a cada minuto, sem
   rodar git. Quando um aldeão troca de branch, o app conta de novo na hora, para a placa não ficar
   um minuto atrás do rótulo do aldeão. Troca na mão sem sessão aberta aparece na contagem seguinte.
@@ -491,7 +495,7 @@ tempo. Só lê; nenhuma missão começa sem o usuário treinar o aldeão.
 
 | Etapa | Escopo | Status |
 |---|---|---|
-| 1 a 4 | Ronda, missões, cavaleiro no mapa com aura, equipamento (conectores, skills, rotinas), diário e níveis | **Concluídas** em 2026-10-03; falta a ronda de verdade no app |
+| 1 a 4 | Ronda, missões, cavaleiro no mapa com aura, equipamento (conectores, skills, rotinas), diário e níveis | **Concluídas** em 2026-10-03; em 2026-10-11 a ronda trocou `--restricted` (que derrubava os conectores do claude.ai) por `--setting-sources user` com hooks desligados; falta a ronda de verdade no app |
 | 4b e 4c | Equipamento no desenho do Ragnarok; edição fluida (foco preservado, salvar ao fechar, Desfazer) | **Concluídas** em 2026-10-04 |
 | 4e | Equipar e editar skills: busca, peso na ronda, instruções do SKILL.md editadas no painel, atalhos na aba Habilidades | **Concluída** em 2026-10-04 |
 | 5 | Prestar contas: acompanhar o aldeão e deixar o rascunho de resposta na thread de origem | Proposta |
@@ -554,6 +558,14 @@ com `--remote-control`, não o mapa, e deixa de fora os agentes que o app hosped
 - Endereço na internet (opcional): só `https://` com o domínio puro, sem caminho. O túnel entra por
   localhost, então passa pelo filtro de endereços e só o código o barra; o painel pede login no
   túnel (Cloudflare Access) na frente.
+- Por que o Access é obrigatório na internet: quem tem o código cria agente e liga "Aprovar tudo
+  por 10 min", ou seja, roda qualquer comando no PC. E o código é o mesmo da rede local, onde vai
+  em HTTP aberto: um vazamento no Wi-Fi viraria acesso de qualquer lugar. Com o Access, o código
+  sozinho não basta. Defesa dupla: o `cloudflared` confere o JWT do Access na origem
+  (`originRequest.access.required`), então mesmo um Access desligado por engano não abre a porta.
+- Login do Access vencido: a página do celular pede a API com `redirect: 'manual'`; o app nunca
+  redireciona, então um redirecionamento é o Access, e a página recarrega para passar pelo login
+  (com o código guardado), menos com uma resposta ou tarefa pela metade aberta.
 
 ### Etapas
 
@@ -562,7 +574,7 @@ com `--remote-control`, não o mapa, e deixa de fora os agentes que o app hosped
 | 1 | Painel na sidebar com QR, servidor local, página do celular com aprovações, respostas e novo agente | **Concluída** em 2026-10-03, com testes do backend e das duas telas no Chrome headless com backend falso; falta testar num celular de verdade |
 | 2 | Avisos com a página fechada (push precisa de HTTPS; alternativa: ntfy no Tailscale) | Ideia |
 | 3 | HTTPS pelo `tailscale serve`, para tirar o aviso de rede aberta | Ideia |
-| 4 | Endereço na internet: campo no painel para o domínio de um túnel (Cloudflare Tunnel); o QR ganha a rede "Internet", primeira da lista, e a página pareada nele funciona em casa e fora | **Concluída** em 2026-10-04 com `agents.fontenele.com.br` (túnel `agent-of-empires`, serviço `cloudflared-agents` do systemd de usuário); falta o Cloudflare Access na frente |
+| 4 | Endereço na internet: campo no painel para o domínio de um túnel (Cloudflare Tunnel); o QR ganha a rede "Internet", primeira da lista, e a página pareada nele funciona em casa e fora | **Concluída** em 2026-10-04 com `agents.fontenele.com.br` (túnel `agent-of-empires`, serviço `cloudflared-agents` do systemd de usuário); falta o Cloudflare Access na frente (em 2026-10-06 o endereço ainda respondia sem login, só com o código; a página já lida com o login vencido) |
 | 5 | Responder pelo celular a agentes do Cursor e do terminal: a mensagem encerra o processo lá e retoma a mesma conversa no app (`--resume`), já com ela como próximo turno; o diálogo avisa que a conversa muda de lugar | **Concluída** em 2026-10-04, com testes do backend; falta testar num celular de verdade |
 | 6 | "Aprovar tudo por 10 min" no celular, o mesmo interruptor do mapa (os dois mostram a contagem, quem ligar); e o hook de aprovação se corrige ao abrir o app: um caminho velho (binário recompilado vira `… (deleted)`) fazia os pedidos do Cursor não chegarem nem ao painel nem ao celular | **Concluída** em 2026-10-04. Perguntas (AskUserQuestion) de agentes do Cursor seguem só no Cursor: o hook de permissão não as recebe e responder por ele não é documentado; as dos agentes do app, com escolha múltipla, já vão ao celular |
 | 7 | Segurança do código: **Invalidar código** no lugar de "Trocar o código", com confirmação de dois cliques, e **O código vale por** (sem prazo, 1, 7 ou 30 dias), com a data em que vence ao lado | **Concluída** em 2026-10-04, com teste do vencimento e o painel conferido no Chrome headless com backend falso |
@@ -678,7 +690,7 @@ melhor e criando mais coisas.
 
 ## Iniciativa: custo dos tokens em preço de API
 
-Atualizada em 2026-10-04.
+Atualizada em 2026-10-06.
 
 ### Problema
 
@@ -699,8 +711,17 @@ quanto a assinatura está subsidiando.
   como os tokens. Modelo desconhecido de uma família conhecida usa o preço atual da família;
   `<synthetic>` não custa nada. O custo sai por dia no `DayStats.costUsd`.
 - **Assinatura**: `usage.rs` lê só `subscriptionType` e `rateLimitTier` das credenciais do Claude
-  Code (nunca o token) e dá o preço de tabela: Pro US$ 20, Max 5x US$ 100, Max 20x US$ 200 por mês.
-  Team e Enterprise ficam sem comparação (preço por contrato).
+  Code (nunca o token) e dá o preço de tabela com cobrança mensal: Pro US$ 20, Max 5x US$ 100,
+  Max 20x US$ 200, assento Team Standard US$ 25 e Team Premium US$ 125 (o premium vem com o
+  `rateLimitTier` do Max). Enterprise fica sem comparação (assento mais uso a preço de API).
+- **Várias contas na mesma máquina**: com uma segunda conta num perfil separado
+  (`CLAUDE_CONFIG_DIR=~/.claude-pessoal`) cuja pasta `projects` é link para a mesma do perfil
+  principal, as sessões das duas entram no custo, então as assinaturas são somadas ("Team Premium +
+  Max 5x", US$ 225). Entram o perfil ativo e todo `~/.claude` ou `~/.claude-*` com a mesma
+  `projects`; um perfil com `projects` própria fica de fora, porque os tokens dele não estão no
+  custo. Se um dos perfis for Enterprise, não há comparação, porque uma soma parcial inflaria o
+  subsídio. O app também passou a respeitar `CLAUDE_CONFIG_DIR` nas credenciais e no cache de
+  limites, como já fazia com as sessões.
 - **Na Visão do império**: seção "Tokens e custo · últimos 30 dias" logo abaixo dos totais, com
   três cartões (custo em API, assinatura, subsidiado e quantas vezes o que você paga), uma barra
   "você paga / subsidiado" e o gráfico diário em duas linhas, tokens e custo, cada uma na sua
@@ -715,6 +736,47 @@ quanto a assinatura está subsidiando.
 | Etapa | Escopo | Status |
 |---|---|---|
 | 1 | Barra e topo da Visão focados em ouro e tokens; custo em API por modelo, assinatura e subsídio com gráfico diário | **Concluída** em 2026-10-04, testes do Rust (preços por modelo, cache de 5 min e 1 h, modo rápido, plano) e contagem real desta máquina (US$ 3.138 em 30 dias contra US$ 100 do Max 5x); interface verificada no Chrome headless nos três casos (subsidiado, assinatura mais cara, plano desconhecido) |
+| 2 | Assentos Team com preço; assinaturas somadas quando duas contas dividem as sessões; `CLAUDE_CONFIG_DIR` respeitado | **Concluída** em 2026-10-06, testes do Rust (planos Team, perfis com `projects` em link) e leitura real desta máquina, que passou de "plano não identificado" (o `~/.claude` virou a conta Team) para Team Premium + Max 5x, US$ 225 contra US$ 3.670 em 30 dias |
+
+## Iniciativa: várias contas do Claude
+
+Atualizada em 2026-10-06.
+
+### Problema
+
+O Claude Code não troca de conta sozinho (`/login` desloga a outra), então duas assinaturas na
+mesma máquina vivem em perfis separados por `CLAUDE_CONFIG_DIR` (`~/.claude` e, por exemplo,
+`~/.claude-pessoal`, com as pastas de sessões em link). O app só via o perfil com que foi aberto:
+as barras mostravam uma conta, todo agente saía por ela, e não havia como usar a folga da outra.
+O pedido foi poder alternar entre as contas pelo app e ter uma visão geral delas.
+
+### Como funciona
+
+- **Quais contas**: o perfil do app e todo `~/.claude` ou `~/.claude-*` com login
+  (`.credentials.json`) cuja pasta `projects` é a mesma, em link. São as contas cujas sessões o
+  mapa vê. Um perfil com `projects` própria fica de fora: um agente aberto nele não apareceria.
+- **Conta ativa**: salva em `config.json` (`claudeAccount`, a pasta do perfil); sem escolha, é a do
+  próprio app. Os agentes novos aqui no app e no terminal, as sessões retomadas e as rondas do
+  Batedor rodam nela. O app põe `CLAUDE_CONFIG_DIR` no processo (no terminal, como `env …` antes
+  do `claude`, porque o gnome-terminal abre o shell num servidor que não herda o ambiente). Para o
+  `~/.claude` padrão a variável sai, porque o `.claude.json` dele fica na pasta pessoal. A pasta
+  só vem da lista que o próprio app montou.
+- **Limites**: a cada 1 min o app busca os limites de cada conta, com o token dela. As barras, os
+  balões das bases e a pausa de 80% das rotinas seguem a conta ativa. Avisos de 90% e de reinício
+  saem por conta, com o nome dela quando há mais de uma. Se a ativa passa de 90% e outra tem folga,
+  a notificação e a faixa vermelha sugerem a troca. O token de uma conta parada vence (o app nunca
+  grava credenciais), e ela mostra a última leitura com a idade.
+- **Na tela**: um botão por conta acima das barras, com o limite mais cheio de cada uma (a ativa
+  em dourado; clicar troca). Na Visão do império, a seção **Contas Claude** com plano, preço,
+  sessão, semana e "Usar". O diálogo "Novo agente" diz em que conta o agente vai rodar.
+- **Fora do alcance**: a aba do Cursor usa a conta logada na extensão, e um agente que já está
+  rodando continua na conta em que começou.
+
+### Etapas
+
+| Etapa | Escopo | Status |
+|---|---|---|
+| 1 | Contas descobertas pelos perfis com `projects` em link; conta ativa para agentes novos, retomadas e Batedor; limites de cada conta, avisos por conta e sugestão de troca; botões no painel, seção na Visão do império e conta no "Novo agente" | **Concluída** em 2026-10-06, testes do Rust (perfis, `.claude.json` de cada perfil, ambiente do `claude` em cada caso) e leitura real das duas contas desta máquina; interface verificada no Chrome headless com dados falsos (aviso com troca, botões, troca de conta, tabela da Visão, dica do "Novo agente") |
 
 ## Iniciativa: vitrine do repositório público
 
